@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Doom-style Shooter</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background-color: black;
+        }
+        #game-container { 
+            width: 100vw; 
+            height: 100vh; 
+        }
+        #hud {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: #ff0000;
+            font-size: 24px;
+            text-shadow: 2px 2px 2px black;
+        }
+        #crosshair {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            width: 20px;
+            height: 20px;
+            border: 2px solid red;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container"></div>
+    <div id="hud">
+        Health: <span id="health">100</span> | 
+        Ammo: <span id="ammo">30</span> |
+        Level: <span id="level">1</span> |
+        Enemies: <span id="enemies">5</span>
+        <span id="reload-text" style="display: none; color: red; margin-left: 10px;">RELOADING...</span>
+    </div>
+    <div id="crosshair"></div>
+    <div id="pause-menu" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+        background: rgba(0,0,0,0.8); padding: 20px; color: red; text-align: center; border: 2px solid red;">
+        <h2>PAUSED</h2>
+        <p>Press ESC to resume</p>
+        <p>Current Level: <span id="pause-level">1</span></p>
+        <p>Enemies Remaining: <span id="pause-enemies">5</span></p>
+    </div>
+    <canvas id="minimap" style="position: fixed; top: 20px; right: 20px; border: 2px solid red;"></canvas>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        class Game {
+            constructor() {
+                this.config = {
+                    playerSpeed: 0.15,
+                    playerHeight: 1.7,
+                    monsterSpeed: 0.1,
+                    monsterDamage: 10,
+                    startingAmmo: 30,
+                    mazeSize: 15,
+                    jumpForce: 0.3,
+                    gravity: 0.015,
+                    bulletDamage: 25,
+                    shootingCooldown: 250,
+                    reloadTime: 2000,
+                    enemiesPerLevel: 5,
+                    cellSize: 2
+                };
+
+                this.state = {
+                    health: 100,
+                    ammo: this.config.startingAmmo,
+                    isGrounded: true,
+                    velocity: new THREE.Vector3(0, 0, 0),
+                    lastShootTime: 0,
+                    isReloading: false,
+                    level: 1,
+                    isPaused: false,
+                    isMouseDown: false,
+                    isGameOver: false
+                };
+
+                this.monsters = [];
+                this.setupScene();
+                this.setupLighting();
+                this.createLevel();
+                this.setupControls();
+                this.setupAudio();
+                this.createGunModel();
+                this.setupMinimap();
+                this.spawnInitialMonsters();
+                this.animate();
+            }
+
+            setupScene() {
+                this.scene = new THREE.Scene();
+                this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+                this.renderer = new THREE.WebGLRenderer({ antialias: true });
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.setClearColor(0x000000);
+                document.getElementById('game-container').appendChild(this.renderer.domElement);
+            }
+
+            setupLighting() {
+                const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+                this.scene.add(ambient);
+                const directional = new THREE.DirectionalLight(0xffffff, 0.5);
+                directional.position.set(0, 1, 0);
+                this.scene.add(directional);
+                const pointLight = new THREE.PointLight(0xffffff, 1, 10);
+                this.camera.add(pointLight);
+                this.scene.add(this.camera);
+            }
+
+            generateMaze() {
+                const maze = Array(this.config.mazeSize).fill().map(() => Array(this.config.mazeSize).fill(1));
+                
+                function primMaze(maze) {
+                    const frontiers = [];
+                    const startX = Math.floor(maze.length / 2);
+                    const startZ = Math.floor(maze[0].length / 2);
+                    
+                    maze[startX][startZ] = 0;
+                    
+                    function addFrontiers(x, z) {
+                        const dirs = [[0, 2], [2, 0], [0, -2], [-2, 0]];
+                        dirs.forEach(([dx, dz]) => {
+                            const nx = x + dx;
+                            const nz = z + dz;
+                            if (nx >= 0 && nx < maze.length && nz >= 0 && nz < maze[0].length && maze[nx][nz] === 1) {
+                                frontiers.push([nx, nz]);
+                            }
+                        });
+                    }
+                    
+                    addFrontiers(startX, startZ);
+                    
+                    while (frontiers.length > 0) {
+                        const randIndex = Math.floor(Math.random() * frontiers.length);
+                        const [fx, fz] = frontiers[randIndex];
+                        frontiers.splice(randIndex, 1);
+                        
+                        const neighbors = [];
+                        const dirs = [[0, 2], [2, 0], [0, -2], [-2, 0]];
+                        dirs.forEach(([dx, dz]) => {
+                            const nx = fx + dx;
+                            const nz = fz + dz;
+                            if (nx >= 0 && nx < maze.length && nz >= 0 && nz < maze[0].length && maze[nx][nz] === 0) {
+                                neighbors.push([nx, nz]);
+                            }
+                        });
+                        
+                        if (neighbors.length > 0) {
+                            const [nx, nz] = neighbors[Math.floor(Math.random() * neighbors.length)];
+                            const mx = (fx + nx) / 2;
+                            const mz = (fz + nz) / 2;
+                            maze[fx][fz] = 0;
+                            maze[mx][mz] = 0;
+                            addFrontiers(fx, fz);
+                        }
+                    }
+                    
+                    maze[startX][startZ] = 0;
+                    maze[startX+1][startZ] = 0;
+                    maze[startX-1][startZ] = 0;
+                    maze[startX][startZ+1] = 0;
+                    maze[startX][startZ-1] = 0;
+                }
+                
+                primMaze(maze);
+                
+                for (let i = 0; i < this.config.mazeSize; i++) {
+                    maze[0][i] = 1;
+                    maze[this.config.mazeSize-1][i] = 1;
+                    maze[i][0] = 1;
+                    maze[i][this.config.mazeSize-1] = 1;
+                }
+                
+                return maze;
+            }
+
+            createLevel() {
+                this.maze = this.generateMaze();
+                const floorGeometry = new THREE.PlaneGeometry(
+                    this.config.mazeSize * this.config.cellSize, 
+                    this.config.mazeSize * this.config.cellSize
+                );
+                const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x808080 });
+                const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+                floor.rotation.x = -Math.PI / 2;
+                floor.receiveShadow = true;
+                this.scene.add(floor);
+
+                const wallGeometry = new THREE.BoxGeometry(
+                    this.config.cellSize, 
+                    4, 
+                    this.config.cellSize
+                );
+                const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513 });
+
+                for (let x = 0; x < this.config.mazeSize; x++) {
+                    for (let z = 0; z < this.config.mazeSize; z++) {
+                        if (this.maze[x][z] === 1) {
+                            const wall = new THREE.Mesh(wallGeometry, wallMaterial);
+                            wall.position.set(
+                                (x - this.config.mazeSize/2) * this.config.cellSize,
+                                2,
+                                (z - this.config.mazeSize/2) * this.config.cellSize
+                            );
+                            wall.castShadow = true;
+                            wall.receiveShadow = true;
+                            this.scene.add(wall);
+                        }
+                    }
+                }
+                this.findStartPosition();
+            }
+
+            findStartPosition() {
+                const center = Math.floor(this.config.mazeSize / 2);
+                const spawnX = (center - this.config.mazeSize/2) * this.config.cellSize;
+                const spawnZ = (center - this.config.mazeSize/2) * this.config.cellSize;
+                
+                this.camera.position.set(spawnX, this.config.playerHeight, spawnZ);
+            }
+
+            setupControls() {
+                this.keys = { 
+                    forward: false, 
+                    backward: false, 
+                    left: false, 
+                    right: false, 
+                    jump: false 
+                };
+                this.pitch = 0;
+                this.yaw = 0;
+
+                document.addEventListener('keydown', (e) => {
+                    switch(e.code) {
+                        case 'KeyW': this.keys.forward = true; break;
+                        case 'KeyS': this.keys.backward = true; break;
+                        case 'KeyA': this.keys.left = true; break;
+                        case 'KeyD': this.keys.right = true; break;
+                        case 'Space': 
+                            if (this.state.isGrounded) {
+                                this.state.velocity.y = this.config.jumpForce;
+                                this.state.isGrounded = false;
+                            }
+                            break;
+                        case 'KeyR': this.reload(); break;
+                        case 'Escape': this.togglePause(); break;
+                    }
+                });
+
+                document.addEventListener('keyup', (e) => {
+                    switch(e.code) {
+                        case 'KeyW': this.keys.forward = false; break;
+                        case 'KeyS': this.keys.backward = false; break;
+                        case 'KeyA': this.keys.left = false; break;
+                        case 'KeyD': this.keys.right = false; break;
+                    }
+                });
+
+                document.addEventListener('mousemove', (e) => {
+                    if (document.pointerLockElement === this.renderer.domElement) {
+                        this.yaw -= e.movementX * 0.002;
+                        this.pitch -= e.movementY * 0.002;
+                        this.pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.pitch));
+                        const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+                        euler.x = this.pitch;
+                        euler.y = this.yaw;
+                        this.camera.quaternion.setFromEuler(euler);
+                    }
+                });
+
+                document.addEventListener('mousedown', () => {
+                    if (document.pointerLockElement === this.renderer.domElement) {
+                        this.state.isMouseDown = true;
+                    } else {
+                        this.renderer.domElement.requestPointerLock();
+                    }
+                });
+
+                document.addEventListener('mouseup', () => {
+                    this.state.isMouseDown = false;
+                });
+
+                document.addEventListener('click', () => {
+                    if (!document.pointerLockElement) {
+                        this.renderer.domElement.requestPointerLock();
+                    }
+                });
+            }
+
+            checkCollision(position, isMonster = false) {
+                const radius = isMonster ? 0.5 : 0.3;
+                const cellSize = this.config.cellSize;
+                
+                const gridX = Math.floor((position.x + (this.config.mazeSize * cellSize / 2)) / cellSize);
+                const gridZ = Math.floor((position.z + (this.config.mazeSize * cellSize / 2)) / cellSize);
+                
+                for (let dx = -1; dx <= 1; dx++) {
+                    for (let dz = -1; dz <= 1; dz++) {
+                        const checkX = gridX + dx;
+                        const checkZ = gridZ + dz;
+                        
+                        if (checkX < 0 || checkX >= this.config.mazeSize || 
+                            checkZ < 0 || checkZ >= this.config.mazeSize) {
+                            continue;
+                        }
+                        
+                        if (this.maze[checkX][checkZ] === 1) {
+                            const wallX = (checkX - this.config.mazeSize/2) * cellSize;
+                            const wallZ = (checkZ - this.config.mazeSize/2) * cellSize;
+                            const dx = Math.max(Math.abs(position.x - wallX) - cellSize/2, 0);
+                            const dz = Math.max(Math.abs(position.z - wallZ) - cellSize/2, 0);
+                            const distance = Math.sqrt(dx*dx + dz*dz);
+                            
+                            if (distance < radius) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+
+                if (!isMonster) {
+                    for (const monster of this.monsters) {
+                        const dx = position.x - monster.position.x;
+                        const dz = position.z - monster.position.z;
+                        const distance = Math.sqrt(dx * dx + dz * dz);
+                        if (distance < 0.8) {
+                            return true;
+                        }
+                    }
+                }
+                
+                return false;
+            }
+
+            updatePlayer() {
+                if (this.state.isPaused) return;
+
+                const moveSpeed = this.config.playerSpeed;
+                const direction = new THREE.Vector3();
+
+                const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
+                const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
+
+                forward.y = 0;
+                right.y = 0;
+                forward.normalize();
+                right.normalize();
+
+                if (this.keys.forward) direction.add(forward);
+                if (this.keys.backward) direction.sub(forward);
+                if (this.keys.left) direction.sub(right);
+                if (this.keys.right) direction.add(right);
+
+                if (direction.length() > 0) {
+                    direction.normalize().multiplyScalar(moveSpeed);
+                    const newPosition = this.camera.position.clone().add(direction);
+                    if (!this.checkCollision(newPosition)) {
+                        this.camera.position.copy(newPosition);
+                    }
+                }
+
+                this.state.velocity.y -= this.config.gravity;
+                this.camera.position.y += this.state.velocity.y;
+                if (this.camera.position.y <= this.config.playerHeight) {
+                    this.camera.position.y = this.config.playerHeight;
+                    this.state.velocity.y = 0;
+                    this.state.isGrounded = true;
+                }
+            }
+
+            createMonster() {
+                const monsterGroup = new THREE.Group();
+                const bodyGeom = new THREE.CylinderGeometry(0.3, 0.3, 1.5, 8);
+                const bodyMat = new THREE.MeshStandardMaterial({ color: 0x660000 });
+                const body = new THREE.Mesh(bodyGeom, bodyMat);
+                body.position.y = 0.75;
+                monsterGroup.add(body);
+
+                const headGeom = new THREE.SphereGeometry(0.3, 8, 8);
+                const headMat = new THREE.MeshStandardMaterial({ color: 0x660000 });
+                const head = new THREE.Mesh(headGeom, headMat);
+                head.position.y = 1.65;
+                monsterGroup.add(head);
+
+                const eyeGeom = new THREE.SphereGeometry(0.1, 8, 8);
+                const eyeMat = new THREE.MeshStandardMaterial({ 
+                    color: 0xff0000,
+                    emissive: 0xff0000,
+                    emissiveIntensity: 0.5
+                });
+
+                const leftEye = new THREE.Mesh(eyeGeom, eyeMat);
+                leftEye.position.set(-0.15, 1.75, 0.2);
+                monsterGroup.add(leftEye);
+
+                const rightEye = new THREE.Mesh(eyeGeom, eyeMat);
+                rightEye.position.set(0.15, 1.75, 0.2);
+                monsterGroup.add(rightEye);
+
+                let position;
+                let attempts = 0;
+                const maxAttempts = 100;
+
+                do {
+                    attempts++;
+                    const x = Math.floor(Math.random() * this.config.mazeSize);
+                    const z = Math.floor(Math.random() * this.config.mazeSize);
+                    
+                    if (this.maze[x][z] === 0) {
+                        const potentialX = (x - this.config.mazeSize/2) * this.config.cellSize;
+                        const potentialZ = (z - this.config.mazeSize/2) * this.config.cellSize;
+                        const dx = potentialX - this.camera.position.x;
+                        const dz = potentialZ - this.camera.position.z;
+                        const distanceFromPlayer = Math.sqrt(dx*dx + dz*dz);
+                        let tooCloseToOtherMonster = false;
+                        for (const otherMonster of this.monsters) {
+                            const monsterDist = Math.sqrt(
+                                Math.pow(potentialX - otherMonster.position.x, 2) +
+                                Math.pow(potentialZ - otherMonster.position.z, 2)
+                            );
+                            if (monsterDist < 2) {
+                                tooCloseToOtherMonster = true;
+                                break;
+                            }
+                        }
+                        if (distanceFromPlayer > 3 && !tooCloseToOtherMonster) {
+                            position = { x: potentialX, z: potentialZ };
+                            break;
+                        }
+                    }
+                } while (attempts < maxAttempts);
+
+                if (!position) {
+                    const x = Math.floor(Math.random() * this.config.mazeSize);
+                    const z = Math.floor(Math.random() * this.config.mazeSize);
+                    position = {
+                        x: (x - this.config.mazeSize/2) * this.config.cellSize,
+                        z: (z - this.config.mazeSize/2) * this.config.cellSize
+                    };
+                }
+
+                monsterGroup.position.set(position.x, 0, position.z);
+                monsterGroup.userData.health = 100;
+                monsterGroup.userData.lastAttack = 0;
+                monsterGroup.userData.active = true;
+                monsterGroup.rotation.x = 0;
+                monsterGroup.rotation.z = 0;
+                this.scene.add(monsterGroup);
+                this.monsters.push(monsterGroup);
+            }
+
+            updateMonsters() {
+                this.monsters.forEach(monster => {
+                    if (!monster.userData.active) return;
+
+                    const directionToPlayer = new THREE.Vector3()
+                        .subVectors(this.camera.position, monster.position)
+                        .normalize();
+                    directionToPlayer.y = 0;
+
+                    const moveVector = directionToPlayer.multiplyScalar(this.config.monsterSpeed);
+                    const newPosition = monster.position.clone().add(moveVector);
+
+                    if (!this.checkCollision(newPosition, true)) {
+                        let canMove = true;
+                        for (const otherMonster of this.monsters) {
+                            if (monster !== otherMonster) {
+                                const dx = newPosition.x - otherMonster.position.x;
+                                const dz = newPosition.z - otherMonster.position.z;
+                                if (Math.sqrt(dx*dx + dz*dz) < 1) {
+                                    canMove = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if (canMove) {
+                            monster.position.copy(newPosition);
+                        }
+                    }
+
+                    const playerPosition = this.camera.position.clone();
+                    playerPosition.y = monster.position.y;
+                    monster.lookAt(playerPosition);
+                    monster.rotation.x = 0;
+                    monster.rotation.z = 0;
+
+                    const distanceToPlayer = monster.position.distanceTo(this.camera.position);
+                    const currentTime = Date.now();
+                    
+                    if (distanceToPlayer < 2 && currentTime - monster.userData.lastAttack >= 1000) {
+                        this.state.health -= this.config.monsterDamage;
+                        monster.userData.lastAttack = currentTime;
+                        document.getElementById('health').textContent = this.state.health;
+                        document.body.style.backgroundColor = '#500';
+                        setTimeout(() => document.body.style.backgroundColor = 'black', 100);
+                        if (this.state.health <= 0) {
+                            this.gameOver();
+                        }
+                    }
+                });
+            }
+
+            shoot() {
+                if (this.state.isPaused || this.state.isReloading) return;
+
+                const now = Date.now();
+                if (now - this.state.lastShootTime < this.config.shootingCooldown) return;
+
+                if (this.state.ammo <= 0) {
+                    this.reload();
+                    this.sounds.emptyGun.currentTime = 0;
+                    this.sounds.emptyGun.play();
+                    return;
+                }
+
+                this.sounds.shoot.currentTime = 0;
+                this.sounds.shoot.volume = 0.5;
+                this.sounds.shoot.play();
+
+                this.gunModel.position.z += 0.1;
+                setTimeout(() => this.gunModel.position.z -= 0.1, 50);
+                this.muzzleFlash.intensity = 2;
+                setTimeout(() => this.muzzleFlash.intensity = 0, 50);
+
+                this.state.lastShootTime = now;
+                this.state.ammo--;
+                document.getElementById('ammo').textContent = this.state.ammo;
+
+                const raycaster = new THREE.Raycaster();
+                raycaster.setFromCamera(new THREE.Vector2(), this.camera);
+
+                const monsterParts = [];
+                this.monsters.forEach(monster => {
+                    monster.traverse(child => {
+                        if (child instanceof THREE.Mesh) {
+                            child.monster = monster;
+                            monsterParts.push(child);
+                        }
+                    });
+                });
+
+                const intersects = raycaster.intersectObjects(monsterParts);
+                if (intersects.length > 0) {
+                    const hitObject = intersects[0].object;
+                    const monster = hitObject.monster;
+                    monster.userData.health -= 25;
+
+                    monster.traverse(child => {
+                        if (child instanceof THREE.Mesh) {
+                            child.material.color.setHex(0xff0000);
+                            setTimeout(() => {
+                                child.material.color.setHex(child === hitObject ? 0xff0000 : 0x660000);
+                            }, 100);
+                        }
+                    });
+
+                    if (monster.userData.health <= 0) {
+                        this.sounds.enemyDeath.currentTime = 0;
+                        this.sounds.enemyDeath.play();
+                        this.scene.remove(monster);
+                        this.monsters = this.monsters.filter(m => m !== monster);
+                        document.getElementById('enemies').textContent = this.monsters.length;
+                        if (this.monsters.length === 0) {
+                            this.nextLevel();
+                        }
+                    }
+                }
+            }
+
+            reload() {
+                if (this.state.ammo === 30 || this.state.isReloading || this.state.isPaused) return;
+                
+                this.state.isReloading = true;
+                document.getElementById('reload-text').style.display = 'inline';
+                this.sounds.reload.currentTime = 0;
+                this.sounds.reload.play();
+                this.gunModel.rotation.x = -Math.PI/4;
+                
+                setTimeout(() => {
+                    this.gunModel.rotation.x = 0;
+                    this.state.ammo = 30;
+                    this.state.isReloading = false;
+                    document.getElementById('ammo').textContent = this.state.ammo;
+                    document.getElementById('reload-text').style.display = 'none';
+                }, this.config.reloadTime);
+            }
+
+            spawnInitialMonsters() {
+                for (let i = 0; i < this.config.enemiesPerLevel; i++) {
+                    this.createMonster();
+                }
+            }
+
+            animate() {
+                requestAnimationFrame(() => this.animate());
+                if (!this.state.isPaused && !this.state.isGameOver) {
+                    this.updatePlayer();
+                    this.updateMonsters();
+                    this.updateMinimap();
+                    if (this.state.isMouseDown) {
+                        this.shoot();
+                    }
+                    this.renderer.render(this.scene, this.camera);
+                }
+            }
+
+            setupAudio() {
+                this.sounds = {
+                    background: new Audio('https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3'),
+                    shoot: new Audio('https://www.soundjay.com/weapon/sounds/pistol-1.mp3'),
+                    reload: new Audio('https://www.soundjay.com/mechanical/sounds/gun-reload-1.mp3'),
+                    enemyDeath: new Audio('https://www.soundjay.com/mechanical/sounds/robot-death-1.mp3'),
+                    playerDeath: new Audio('https://www.soundjay.com/mechanical/sounds/death-sound-1.mp3'),
+                    levelUp: new Audio('https://www.soundjay.com/mechanical/sounds/level-up-1.mp3'),
+                    emptyGun: new Audio('https://www.soundjay.com/mechanical/sounds/gun-empty-click-1.mp3')
+                };
+                Object.values(this.sounds).forEach(sound => sound.volume = 0.3);
+                this.sounds.shoot.volume = 0.5;
+                this.sounds.background.loop = true;
+                document.addEventListener('click', () => this.sounds.background.play(), { once: true });
+            }
+
+            createGunModel() {
+                const gunGroup = new THREE.Group();
+                const bodyGeometry = new THREE.BoxGeometry(0.2, 0.2, 0.5);
+                const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
+                const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+                const barrelGeometry = new THREE.BoxGeometry(0.1, 0.1, 0.7);
+                const barrel = new THREE.Mesh(barrelGeometry, bodyMaterial);
+                barrel.position.z = -0.3;
+                const handleGeometry = new THREE.BoxGeometry(0.15, 0.4, 0.15);
+                const handle = new THREE.Mesh(handleGeometry, bodyMaterial);
+                handle.position.y = -0.25;
+                gunGroup.add(body);
+                gunGroup.add(barrel);
+                gunGroup.add(handle);
+                gunGroup.position.set(0.3, -0.3, -0.5);
+                this.camera.add(gunGroup);
+                this.gunModel = gunGroup;
+                this.muzzleFlash = new THREE.PointLight(0xffff00, 0, 2);
+                this.muzzleFlash.position.set(0.3, -0.2, -1);
+                this.camera.add(this.muzzleFlash);
+            }
+
+            togglePause() {
+                this.state.isPaused = !this.state.isPaused;
+                const pauseMenu = document.getElementById('pause-menu');
+                if (this.state.isPaused) {
+                    pauseMenu.style.display = 'block';
+                    document.exitPointerLock();
+                    this.sounds.background.pause();
+                    document.getElementById('pause-level').textContent = this.state.level;
+                    document.getElementById('pause-enemies').textContent = this.monsters.length;
+                } else {
+                    pauseMenu.style.display = 'none';
+                    this.renderer.domElement.requestPointerLock();
+                    this.sounds.background.play();
+                }
+            }
+
+            nextLevel() {
+                this.state.level++;
+                if (this.state.level > 10) {
+                    alert('Congratulations! You beat the game!');
+                    this.restart();
+                    return;
+                }
+                this.sounds.levelUp.play();
+                document.getElementById('level').textContent = this.state.level;
+                const enemyCount = this.config.enemiesPerLevel + Math.floor(this.state.level * 1.5);
+                for (let i = 0; i < enemyCount; i++) {
+                    this.createMonster();
+                }
+                document.getElementById('enemies').textContent = this.monsters.length;
+            }
+
+            gameOver() {
+                this.state.isGameOver = true;
+                this.sounds.playerDeath.play();
+                this.sounds.background.pause();
+                document.exitPointerLock();
+                alert(`Game Over! You reached level ${this.state.level}`);
+                this.restart();
+            }
+
+            restart() {
+                this.state = {
+                    health: 100,
+                    ammo: this.config.startingAmmo,
+                    level: 1,
+                    isGameOver: false,
+                    isReloading: false,
+                    isPaused: false,
+                    lastShootTime: 0
+                };
+                this.monsters.forEach(monster => this.scene.remove(monster));
+                this.monsters = [];
+                this.createLevel();
+                for (let i = 0; i < this.config.enemiesPerLevel; i++) {
+                    this.createMonster();
+                }
+                this.camera.rotation.set(0, 0, 0);
+                this.pitch = 0;
+                this.yaw = 0;
+                document.getElementById('health').textContent = this.state.health;
+                document.getElementById('ammo').textContent = this.state.ammo;
+                document.getElementById('level').textContent = this.state.level;
+                document.getElementById('enemies').textContent = this.monsters.length;
+                document.getElementById('pause-menu').style.display = 'none';
+                this.sounds.background.currentTime = 0;
+                this.sounds.background.play();
+            }
+
+            setupMinimap() {
+                this.minimap = document.getElementById('minimap');
+                this.minimap.width = 200;
+                this.minimap.height = 200;
+                this.minimapCtx = this.minimap.getContext('2d');
+            }
+
+            updateMinimap() {
+                const ctx = this.minimapCtx;
+                const cellSize = this.minimap.width / this.config.mazeSize;
+                const worldWidth = this.config.mazeSize * this.config.cellSize;
+                const worldHeight = this.config.mazeSize * this.config.cellSize;
+
+                // Clear minimap
+                ctx.fillStyle = 'black';
+                ctx.fillRect(0, 0, this.minimap.width, this.minimap.height);
+                
+                // Draw maze
+                ctx.fillStyle = '#666';
+                for (let x = 0; x < this.config.mazeSize; x++) {
+                    for (let z = 0; z < this.config.mazeSize; z++) {
+                        if (this.maze[x][z] === 1) {
+                            ctx.fillRect(x * cellSize, z * cellSize, cellSize, cellSize);
+                        }
+                    }
+                }
+
+                // Draw monsters
+                ctx.fillStyle = 'red';
+                this.monsters.forEach(monster => {
+                    // Map world coordinates to minimap coordinates
+                    const mapX = (monster.position.x + worldWidth/2) / worldWidth * this.minimap.width;
+                    const mapZ = (monster.position.z + worldHeight/2) / worldHeight * this.minimap.height;
+                    ctx.fillRect(mapX - 2, mapZ - 2, 4, 4);
+                });
+
+                // Draw player as arrow
+                ctx.fillStyle = 'green';
+                const playerMapX = (this.camera.position.x + worldWidth/2) / worldWidth * this.minimap.width;
+                const playerMapZ = (this.camera.position.z + worldHeight/2) / worldHeight * this.minimap.height;
+                const angle = -this.yaw;
+                
+                ctx.save();
+                ctx.translate(playerMapX, playerMapZ);
+                ctx.rotate(angle);
+                ctx.beginPath();
+                ctx.moveTo(0, -6);
+                ctx.lineTo(-4, 2);
+                ctx.lineTo(4, 2);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        const game = new Game();
+        window.addEventListener('resize', () => {
+            game.camera.aspect = window.innerWidth / window.innerHeight;
+            game.camera.updateProjectionMatrix();
+            game.renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
