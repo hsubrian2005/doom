@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+l<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -6,7 +6,7 @@
     <style>
         body { 
             margin: 0; 
-            overflow: hidden; 
+            overflow: hidden;
             background-color: black;
             transition: background-color 0.15s;
         }
@@ -207,6 +207,634 @@
                     console.warn("Could not find valid position for monster");
                     this.mesh.position.set(0, this.baseHeight, 0);
                 }
+            }
+        }
+
+        class ChargerMonster extends Monster {
+            constructor(game) {
+                super(game);
+                this.baseHeight = 0;
+                this.health = 150;
+                this.speed = game.config.monsterSpeed * 0.7;
+                this.chargeSpeed = game.config.monsterSpeed * 10;
+                this.damage = game.config.monsterDamage * 2;
+                this.detectionRadius = 20;
+                this.attackRange = 2.0;
+                this.isCharging = false;
+                this.isPreparingCharge = false;
+                this.isStunned = false;
+                this.chargeDirection = new THREE.Vector3();
+                this.chargeAlignmentTime = 0;
+                this.chargeStartTime = 0;
+                this.chargeDuration = 2000; // 2 seconds preparation
+                this.stunEndTime = 0;
+                this.originalBodyColor = 0x403030; // Store original color
+                this.chargeBodyColor = 0xff0000; // Red color for charging
+                this.bodyMaterial = null; // Will store reference to body material
+                this.headMaterial = null; // Will store reference to head material
+                this.meleeAttackDamage = this.damage * 1.5; // 50% more damage than charge
+                this.createMesh();
+                this.findValidPosition();
+            }
+
+            createMesh() {
+                const chargerGroup = new THREE.Group();
+                
+                // Rhino body colors - darker brown to match image
+                const bodyColor = 0x403030; // Dark brownish for rhino skin
+                const hornColor = 0x8a7a6d; // Bone-like color for horns/spikes
+                
+                // Body - larger and more organic shape using combined geometries
+                const bodyGroup = new THREE.Group();
+                
+                // Main torso - use ellipsoid instead of box for more organic shape
+                const torsoGeometry = new THREE.SphereGeometry(1.0, 13, 10);
+                this.bodyMaterial = new THREE.MeshStandardMaterial({ 
+                    color: this.originalBodyColor,
+                    roughness: 0.9,
+                    metalness: 0.2
+                });
+                const torso = new THREE.Mesh(torsoGeometry, this.bodyMaterial);
+                torso.scale.set(1.0, 0.7, 1.2); // Flatten and elongate
+                torso.position.y = 0.85;
+                bodyGroup.add(torso);
+                
+                // Lower body/haunches - for better limb coverage
+                const lowerBodyGeometry = new THREE.SphereGeometry(0.9, 9, 8);
+                const lowerBody = new THREE.Mesh(lowerBodyGeometry, this.bodyMaterial);
+                lowerBody.scale.set(1.0, 0.6, 1.0);
+                lowerBody.position.set(0, 0.6, 0);
+                bodyGroup.add(lowerBody);
+                
+                // Shoulder area - for better front limb coverage
+                const shoulderGeometry = new THREE.SphereGeometry(0.8, 13, 10);
+                const shoulder = new THREE.Mesh(shoulderGeometry, this.bodyMaterial);
+                shoulder.scale.set(1.1, 0.7, 0.8);
+                shoulder.position.set(0, 0.9, 0.6);
+                bodyGroup.add(shoulder);
+                
+                // Head - replace box with organic shape
+                const headGroup = new THREE.Group();
+                
+                // Base head shape - elongated sphere
+                const baseHeadGeometry = new THREE.SphereGeometry(0.5, 8, 10);
+                this.headMaterial = new THREE.MeshStandardMaterial({ 
+                    color: bodyColor,
+                    roughness: 0.9,
+                    metalness: 0.2
+                });
+                const baseHead = new THREE.Mesh(baseHeadGeometry, this.headMaterial);
+                baseHead.scale.set(0.9, 0.8, 1.2);
+                baseHead.position.set(0, 0, 0.1);
+                headGroup.add(baseHead);
+                
+                // Snout/muzzle - more pointed for rhino
+                const snoutGeometry = new THREE.SphereGeometry(0.4, 9, 9);
+                const snout = new THREE.Mesh(snoutGeometry, this.headMaterial);
+                snout.scale.set(1.0, 0.75, 1.2);
+                snout.position.set(0, -0.1, 0.4);
+                headGroup.add(snout);
+                
+                // Slight bulge on top for more natural shape
+                const headTopGeometry = new THREE.SphereGeometry(0.3, 8, 6);
+                const headTop = new THREE.Mesh(headTopGeometry, this.headMaterial);
+                headTop.scale.set(1.1, 0.6, 0.8);
+                headTop.position.set(0, 0.3, -0.1);
+                headGroup.add(headTop);
+                
+                // Position the entire head group
+                headGroup.position.set(0, 1.3, 0.9);
+                
+                // Add eyes
+                const eyeGeometry = new THREE.SphereGeometry(0.08, 8, 8);
+                const eyeMaterial = new THREE.MeshStandardMaterial({
+                    color: 0xff0000, // Red glowing eyes
+                    emissive: 0xff0000,
+                    emissiveIntensity: 0.5,
+                    roughness: 0.3,
+                    metalness: 0.7
+                });
+                
+                const leftEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+                leftEye.position.set(-0.25, 1.45, 1.5);
+                
+                const rightEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+                rightEye.position.set(0.25, 1.45, 1.5);
+                
+                // Replace flat mouth with curved mouth
+                const mouthGroup = new THREE.Group();
+                
+                // Create a curved mouth using a partial torus
+                const mouthGeometry = new THREE.TorusGeometry(0.15, 0.05, 8, 12, Math.PI);
+                const mouthMaterial = new THREE.MeshStandardMaterial({
+                    color: 0x1a0000, // Dark reddish black
+                    roughness: 1.0,
+                    metalness: 0.1
+                });
+                const mouth = new THREE.Mesh(mouthGeometry, mouthMaterial);
+                mouth.rotation.x = Math.PI / 2; // Orient the torus
+                mouth.rotation.y = Math.PI; // Turn it so open part faces down
+                mouth.scale.set(1, 1, 0.5); // Flatten it a bit
+                mouth.position.set(0, 1.15, 1.6);
+                mouthGroup.add(mouth);
+                
+                // Add teeth - curved arrangement
+                const teethGeometry = new THREE.BoxGeometry(0.04, 0.06, 0.04);
+                const teethMaterial = new THREE.MeshStandardMaterial({
+                    color: 0xf0f0f0, // Off-white
+                    roughness: 0.5,
+                    metalness: 0.2
+                });
+                
+                const teeth = [];
+                // Create teeth in a curved arrangement
+                const teethCount = 5;
+                const teethArc = Math.PI * 0.6; // Arc for teeth placement
+                
+                for (let i = 0; i < teethCount; i++) {
+                    const tooth = new THREE.Mesh(teethGeometry, teethMaterial);
+                    
+                    // Calculate position along curve
+                    const angle = (i / (teethCount - 1)) * teethArc - (teethArc / 2);
+                    const radius = 0.25; // Match the torus radius
+                    
+                    // Position tooth along curve
+                    const x = Math.sin(angle) * radius;
+                    const z = Math.cos(angle) * radius + 1.55; // Offset forward
+                    const y = 1.13 - Math.abs(x) * 0.05; // Slight vertical curve
+                    
+                    tooth.position.set(x, y, z);
+                    
+                    // Rotate each tooth to face outward from the curve
+                    tooth.rotation.y = -angle;
+                    
+                    tooth.userData.originalY = tooth.position.y;
+                    teeth.push(tooth);
+                    mouthGroup.add(tooth);
+                }
+                
+                // Add sharper fangs at corners
+                const fangGeometry = new THREE.ConeGeometry(0.04, 0.12, 8);
+                
+                const leftFang = new THREE.Mesh(fangGeometry, teethMaterial);
+                leftFang.position.set(-0.23, 1.11, 1.65);
+                leftFang.rotation.x = -Math.PI / 8;
+                leftFang.rotation.z = -Math.PI / 10;
+                leftFang.userData.originalY = leftFang.position.y;
+                teeth.push(leftFang);
+                mouthGroup.add(leftFang);
+                
+                const rightFang = new THREE.Mesh(fangGeometry, teethMaterial);
+                rightFang.position.set(0.23, 1.11, 1.65);
+                rightFang.rotation.x = -Math.PI / 8;
+                rightFang.rotation.z = Math.PI / 10;
+                rightFang.userData.originalY = rightFang.position.y;
+                teeth.push(rightFang);
+                mouthGroup.add(rightFang);
+                
+                // Main horn - large and intimidating
+                const primaryHornGeometry = new THREE.ConeGeometry(0.18, 0.9, 8);
+                const hornMaterial = new THREE.MeshStandardMaterial({
+                    color: hornColor,
+                    roughness: 0.5,
+                    metalness: 0.4
+                });
+                const primaryHorn = new THREE.Mesh(primaryHornGeometry, hornMaterial);
+                primaryHorn.rotation.x = Math.PI / 2; // Point forward correctly
+                primaryHorn.position.set(0, 1.5, 1.7);
+                
+                // Secondary horn - smaller above the main horn
+                const secondaryHornGeometry = new THREE.ConeGeometry(0.12, 0.5, 8);
+                const secondaryHorn = new THREE.Mesh(secondaryHornGeometry, hornMaterial);
+                secondaryHorn.rotation.x = Math.PI / 4; // Slightly angled
+                secondaryHorn.position.set(0, 1.7, 1.7);
+                
+                // Legs - thick and stocky
+                const createLeg = (isLeft, isFront) => {
+                    const legGroup = new THREE.Group();
+                    
+                    // Thicker legs for rhino
+                    const legGeometry = new THREE.CylinderGeometry(0.25, 0.25, 0.7, 8);
+                    const leg = new THREE.Mesh(legGeometry, this.bodyMaterial);
+                    leg.position.y = 0.35;
+                    
+                    // Foot
+                    const footGeometry = new THREE.SphereGeometry(0.26, 8, 8);
+                    const foot = new THREE.Mesh(footGeometry, new THREE.MeshStandardMaterial({
+                        color: 0x2a1f1f, // Darker color for hooves
+                        roughness: 0.9,
+                        metalness: 0.3
+                    }));
+                    foot.scale.set(1, 0.4, 1);
+                    foot.position.y = 0;
+                    
+                    legGroup.add(leg);
+                    legGroup.add(foot);
+                    
+                    // Position the leg based on whether it's front or back, left or right
+                    // Position legs more under the body for better appearance during animation
+                    const xPos = isLeft ? -0.45 : 0.45;
+                    const zPos = isFront ? 0.5 : -0.5;
+                    legGroup.position.set(xPos, 0.25, zPos);
+                    
+                    return legGroup;
+                };
+                
+                // Add all parts to the rhino mesh
+                chargerGroup.add(bodyGroup);
+                chargerGroup.add(headGroup);  // Use headGroup instead of head
+                chargerGroup.add(leftEye);
+                chargerGroup.add(rightEye);
+                chargerGroup.add(mouthGroup);
+                chargerGroup.add(primaryHorn);
+                chargerGroup.add(secondaryHorn);
+                
+                // Create legs
+                const frontLeftLeg = createLeg(true, true);
+                const frontRightLeg = createLeg(false, true);
+                const backLeftLeg = createLeg(true, false);
+                const backRightLeg = createLeg(false, false);
+                
+                // Add legs
+                chargerGroup.add(frontLeftLeg);
+                chargerGroup.add(frontRightLeg);
+                chargerGroup.add(backLeftLeg);
+                chargerGroup.add(backRightLeg);
+                
+                // Add spikes
+                const createSpike = (xPos, yPos, zPos, height, width, angle) => {
+                    const spikeGeometry = new THREE.ConeGeometry(width, height, 8);
+                    const spike = new THREE.Mesh(spikeGeometry, hornMaterial);
+                    spike.rotation.x = angle;
+                    spike.position.set(xPos, yPos, zPos);
+                    return spike;
+                };
+                
+                // Add multiple spikes along the back
+                const spikes = [
+                    createSpike(0, 1.7, 0.3, 0.7, 0.15, Math.PI / 6),
+                    createSpike(0, 1.6, 0, 0.6, 0.14, 0),
+                    createSpike(0, 1.5, -0.3, 0.8, 0.16, Math.PI / 12),
+                    createSpike(0, 1.4, -0.6, 0.7, 0.15, Math.PI / 8),
+                    // Side spikes
+                    createSpike(0.4, 1.6, 0.1, 0.5, 0.12, -Math.PI / 3),
+                    createSpike(-0.4, 1.6, 0.1, 0.5, 0.12, -Math.PI / 3),
+                    createSpike(0.5, 1.5, -0.4, 0.6, 0.13, -Math.PI / 5),
+                    createSpike(-0.5, 1.5, -0.4, 0.6, 0.13, -Math.PI / 5)
+                ];
+                spikes.forEach(spike => chargerGroup.add(spike));
+                
+                // Small tail
+                const tailGeometry = new THREE.CylinderGeometry(0.08, 0.03, 0.5, 8);
+                const tail = new THREE.Mesh(tailGeometry, this.bodyMaterial);
+                tail.rotation.x = Math.PI / 3; // Angle up slightly
+                tail.position.set(0, 0.9, -1.5);
+                chargerGroup.add(tail);
+                
+                this.mesh = chargerGroup;
+                
+                // Store references for animation
+                this.parts = {
+                    bodyGroup, headGroup, leftEye, rightEye, mouthGroup, teeth, frontLeftLeg, frontRightLeg, backLeftLeg, backRightLeg,
+                    originalPositions: {
+                        bodyGroup: bodyGroup.position.clone(),
+                        headGroup: headGroup.position.clone(),
+                        leftEye: leftEye.position.clone(),
+                        rightEye: rightEye.position.clone(),
+                        mouthGroup: mouthGroup.position.clone(),
+                        frontLeftLeg: frontLeftLeg.position.clone(),
+                        frontRightLeg: frontRightLeg.position.clone(),
+                        backLeftLeg: backLeftLeg.position.clone(),
+                        backRightLeg: backRightLeg.position.clone()
+                    }
+                };
+            }
+
+            update() {
+                // Force ground level
+                this.mesh.position.y = this.baseHeight;
+
+                // Check if stunned
+                if (this.isStunned) {
+                    if (Date.now() >= this.stunEndTime) {
+                        this.isStunned = false;
+                        // Reset color when no longer stunned
+                        this.bodyMaterial.color.setHex(this.originalBodyColor);
+                        this.headMaterial.color.setHex(this.originalBodyColor);
+                    } else {
+                        return; // Skip movement while stunned
+                    }
+                }
+
+                // Direction to player
+                const directionToPlayer = new THREE.Vector3()
+                    .subVectors(this.game.camera.position, this.mesh.position)
+                    .normalize();
+                directionToPlayer.y = 0;
+
+                const distanceToPlayer = this.mesh.position.distanceTo(this.game.camera.position);
+                const isChasing = distanceToPlayer <= this.detectionRadius;
+                this.state = isChasing ? "chasing" : "patrolling";
+                
+                let speed = this.speed;
+                let moveDirection = new THREE.Vector3();
+                
+                if (this.isCharging) {
+                    // Continue charge in the same direction
+                    moveDirection.copy(this.chargeDirection);
+                    speed = this.chargeSpeed;
+                    
+                    // Check if charge hit a wall
+                    const nextPos = this.mesh.position.clone().add(moveDirection.multiplyScalar(speed));
+                    if (this.game.checkCollision(nextPos, true)) {
+                        this.isCharging = false;
+                        this.isStunned = true;
+                        this.stunEndTime = Date.now() + 2000; // 2 second stun
+                        this.bodyMaterial.color.setHex(this.originalBodyColor); // Reset body color
+                        this.headMaterial.color.setHex(this.originalBodyColor); // Reset head color
+                        return;
+                    }
+                    
+                    // Improved player hit detection - use a wider range while charging
+                    const chargeAttackRange = this.attackRange * 1.5; // Much wider detection range while charging
+                    
+                    // Create a vector to the expected next position
+                    const nextPosition = this.mesh.position.clone().add(moveDirection.clone().multiplyScalar(speed));
+                    const nextDistanceToPlayer = nextPosition.distanceTo(this.game.camera.position);
+                    
+                    // Check if either current position or next position is close enough to player
+                    if ((distanceToPlayer <= chargeAttackRange || nextDistanceToPlayer <= chargeAttackRange) && 
+                        !this.game.state.powerups.invincibility.active) {
+                        // Handle player damage and knockback
+                        this.isCharging = false;
+                        this.isStunned = false; // Don't stun charger when hitting player
+                        this.bodyMaterial.color.setHex(this.originalBodyColor); // Reset body color
+                        this.headMaterial.color.setHex(this.originalBodyColor); // Reset head color
+                        
+                        // Move charger to the point of impact with the player
+                        // Calculate the exact impact point (slightly in front of the player)
+                        const impactPoint = this.game.camera.position.clone();
+                        impactPoint.y = this.mesh.position.y; // Keep the same height
+                        
+                        // Move slightly back from player to avoid clipping
+                        const offsetFromPlayer = directionToPlayer.clone().multiplyScalar(-0.5);
+                        impactPoint.add(offsetFromPlayer);
+                        
+                        // Only move if there's no collision
+                        if (!this.game.checkCollision(impactPoint, true)) {
+                            this.mesh.position.copy(impactPoint);
+                        }
+                        
+                        // Apply knockback to player - simplified and stronger
+                        const knockbackDirection = directionToPlayer.clone().normalize();
+                        const knockbackForce = 5.0; // Much stronger knockback
+                        
+                        // Instead of teleporting the player, create knockback velocity
+                        // that will be applied gradually over time
+                        if (!this.game.playerKnockback) {
+                            this.game.playerKnockback = new THREE.Vector3();
+                        }
+                        
+                        // Set knockback velocity
+                        this.game.playerKnockback.x = knockbackDirection.x * knockbackForce;
+                        this.game.playerKnockback.z = knockbackDirection.z * knockbackForce;
+                        this.game.playerKnockbackTime = Date.now();
+                        this.game.playerKnockbackDuration = 300; // Duration in ms
+                        
+                        // Apply damage
+                        const currentTime = Date.now();
+                        if (currentTime - this.lastAttackTime >= this.attackCooldown) {
+                            this.game.state.health -= this.damage;
+                            this.lastAttackTime = currentTime;
+                            
+                            // Visual feedback
+                            document.body.style.backgroundColor = 'rgba(255,0,0,0.7)';
+                            setTimeout(() => document.body.style.backgroundColor = 'transparent', 150);
+                            
+                            const screenBloodOverlay = document.getElementById('screen-blood-overlay');
+                            if (screenBloodOverlay) {
+                                screenBloodOverlay.style.opacity = '0.9';
+                                setTimeout(() => screenBloodOverlay.style.opacity = '0', 200);
+                            }
+                            
+                            this.game.playSound(100, 0.1, 'square', 0.3);
+                            this.game.playSound(50, 0.3, 'sawtooth', 0.3);
+                            this.game.updateHUD();
+                            this.game.updateHealthBar();
+                            
+                            if (this.game.state.health <= 0) {
+                                this.game.gameOver();
+                            }
+                        }
+                        
+                        return;
+                    }
+                } else if (this.isPreparingCharge) {
+                    // Handle charge preparation
+                    const currentTime = Date.now();
+                    const elapsedTime = currentTime - this.chargeStartTime;
+                    
+                    if (elapsedTime >= this.chargeDuration) {
+                        // Preparation complete, start charging
+                        this.isPreparingCharge = false;
+                        this.isCharging = true;
+                        this.chargeDirection.copy(directionToPlayer);
+                        // Set to full red color for both body and head
+                        this.bodyMaterial.color.setHex(this.chargeBodyColor);
+                        this.headMaterial.color.setHex(this.chargeBodyColor);
+                    } else {
+                        // Gradually turn red during preparation
+                        const progress = elapsedTime / this.chargeDuration; // 0 to 1
+                        const lerpedColor = new THREE.Color().lerpColors(
+                            new THREE.Color(this.originalBodyColor),
+                            new THREE.Color(this.chargeBodyColor),
+                            progress
+                        );
+                        this.bodyMaterial.color.copy(lerpedColor);
+                        this.headMaterial.color.copy(lerpedColor);
+                        
+                        // Face the player during preparation
+                        moveDirection.copy(directionToPlayer);
+                        speed = 0; // Don't move while preparing to charge
+                    }
+                } else if (isChasing) {
+                    // Align with player
+                    moveDirection.copy(directionToPlayer);
+                    
+                    // Check if player is in attack range
+                    if (distanceToPlayer <= this.attackRange && !this.game.state.powerups.invincibility.active) {
+                        // Auto attack when in range
+                        const currentTime = Date.now();
+                        if (currentTime - this.lastAttackTime >= this.attackCooldown) {
+                            this.game.state.health -= this.meleeAttackDamage;
+                            this.lastAttackTime = currentTime;
+                            
+                            // Apply knockback to player
+                            const knockbackDirection = directionToPlayer.clone().normalize();
+                            const knockbackForce = 3.0;
+                            
+                            if (!this.game.playerKnockback) {
+                                this.game.playerKnockback = new THREE.Vector3();
+                            }
+                            
+                            // Set knockback velocity
+                            this.game.playerKnockback.x = knockbackDirection.x * knockbackForce;
+                            this.game.playerKnockback.z = knockbackDirection.z * knockbackForce;
+                            this.game.playerKnockbackTime = Date.now();
+                            this.game.playerKnockbackDuration = 300; // Duration in ms
+                            
+                            // Visual feedback
+                            document.body.style.backgroundColor = 'rgba(255,0,0,0.7)';
+                            setTimeout(() => document.body.style.backgroundColor = 'transparent', 150);
+                            
+                            const screenBloodOverlay = document.getElementById('screen-blood-overlay');
+                            if (screenBloodOverlay) {
+                                screenBloodOverlay.style.opacity = '0.9';
+                                setTimeout(() => screenBloodOverlay.style.opacity = '0', 200);
+                            }
+                            
+                            this.game.playSound(120, 0.15, 'square', 0.4);
+                            this.game.playSound(60, 0.35, 'sawtooth', 0.4);
+                            this.game.updateHUD();
+                            this.game.updateHealthBar();
+                            
+                            if (this.game.state.health <= 0) {
+                                this.game.gameOver();
+                            }
+                        }
+                    }
+                    // Charge only when player is at a distance greater than 6
+                    else if (distanceToPlayer > 6) {
+                        // Check if aligned for charge
+                        const alignment = directionToPlayer.dot(this.mesh.getWorldDirection(new THREE.Vector3()));
+                        if (alignment > 0.95) { // Almost perfectly aligned
+                            this.chargeAlignmentTime++;
+                            if (this.chargeAlignmentTime >= 30) { // About 0.5 seconds at 60fps
+                                // Start preparing to charge
+                                this.isPreparingCharge = true;
+                                this.chargeStartTime = Date.now();
+                                this.chargeAlignmentTime = 0;
+                            }
+                        } else {
+                            this.chargeAlignmentTime = 0;
+                        }
+                    }
+                } else {
+                    // Patrol logic
+                    if (!this.patrolDirection || this.patrolTimeRemaining <= 0) {
+                        this.patrolDirection = new THREE.Vector3(
+                            Math.random() * 2 - 1,
+                            0,
+                            Math.random() * 2 - 1
+                        ).normalize();
+                        this.patrolTimeRemaining = 60;
+                    }
+                    moveDirection.copy(this.patrolDirection);
+                    this.patrolTimeRemaining--;
+                }
+                
+                // Movement and collision
+                if (moveDirection.lengthSq() > 0) {
+                    const currentPos = this.mesh.position.clone();
+                    const moveAttempt = moveDirection.clone().multiplyScalar(speed);
+                    
+                    // Try X movement
+                    const newPosX = currentPos.clone();
+                    newPosX.x += moveAttempt.x;
+                    if (!this.game.checkCollision(newPosX, true)) {
+                        this.mesh.position.x = newPosX.x;
+                    }
+                    
+                    // Try Z movement
+                    const newPosZ = currentPos.clone();
+                    newPosZ.z += moveAttempt.z;
+                    if (!this.game.checkCollision(newPosZ, true)) {
+                        this.mesh.position.z = newPosZ.z;
+                    }
+                }
+                
+                // Update orientation
+                if (moveDirection.lengthSq() > 0) {
+                    const facePos = this.mesh.position.clone().add(moveDirection);
+                    this.mesh.lookAt(facePos);
+                }
+                
+                // Animation
+                this.animationTime += this.animationSpeed;
+                const walkCycle = Math.sin(this.animationTime);
+                const swingAmount = this.isCharging ? 0.4 : 0.2;
+                
+                // Animate limbs
+                if (moveDirection.lengthSq() > 0) {
+                    // Animate rhino legs in diagonal pairs (front-left with back-right, front-right with back-left)
+                    this.parts.frontLeftLeg.position.z = this.parts.originalPositions.frontLeftLeg.z + walkCycle * swingAmount;
+                    this.parts.backRightLeg.position.z = this.parts.originalPositions.backRightLeg.z + walkCycle * swingAmount;
+                    this.parts.frontRightLeg.position.z = this.parts.originalPositions.frontRightLeg.z - walkCycle * swingAmount;
+                    this.parts.backLeftLeg.position.z = this.parts.originalPositions.backLeftLeg.z - walkCycle * swingAmount;
+                    
+
+                    // Body bounce
+                    const bounceHeight = this.isCharging ? 0.1 : 0.05;
+                    const bounceOffset = Math.abs(Math.sin(this.animationTime * 2)) * bounceHeight;
+                    this.parts.bodyGroup.position.y = this.parts.originalPositions.bodyGroup.y + bounceOffset;
+                }
+                
+                // Animate head elements
+                const headBob = this.isCharging ? 0.15 : 0.05;
+                this.parts.headGroup.position.y = this.parts.originalPositions.headGroup.y + Math.abs(Math.sin(this.animationTime * 2)) * headBob;
+                this.parts.leftEye.position.y = this.parts.originalPositions.leftEye.y + Math.abs(Math.sin(this.animationTime * 2)) * headBob;
+                this.parts.rightEye.position.y = this.parts.originalPositions.rightEye.y + Math.abs(Math.sin(this.animationTime * 2)) * headBob;
+                this.parts.mouthGroup.position.y = this.parts.originalPositions.mouthGroup.y + Math.abs(Math.sin(this.animationTime * 2)) * headBob;
+            }
+
+            checkHit(projectilePosition) {
+                // Get relative position from monster to projectile
+                const relativePos = new THREE.Vector3().subVectors(projectilePosition, this.mesh.position);
+                
+                // Transform relative position to account for monster's rotation
+                const rotationMatrix = new THREE.Matrix4();
+                rotationMatrix.makeRotationY(-this.mesh.rotation.y);
+                relativePos.applyMatrix4(rotationMatrix);
+
+                // Define hit regions with their bounds and damage multipliers
+                const hitRegions = {
+
+                    front: {
+                        bounds: {
+                            x: [-0.6, 0.6],
+                            y: [0.0, 1.5],
+                            z: [0.0, 1.5]
+                        },
+                        multiplier: 0.7 // Reduced damage from front
+                    },
+                    back: {
+                        bounds: {
+                            x: [-0.8, 0.8],
+                            y: [0.0, 1.5],
+                            z: [-1.5, -0.0]
+                        },
+                        multiplier: 1.5 // Increased damage from back
+                    }
+                };
+
+                // Check each hit region
+                for (const [region, data] of Object.entries(hitRegions)) {
+                    if (this.isPointInBounds(relativePos, data.bounds)) {
+                        return {
+                            hit: true,
+                            region: region,
+                            multiplier: data.multiplier
+                        };
+                    }
+                }
+
+                return { hit: false };
+            }
+
+            isPointInBounds(point, bounds) {
+                return point.x >= bounds.x[0] && point.x <= bounds.x[1] &&
+                       point.y >= bounds.y[0] && point.y <= bounds.y[1] &&
+                       point.z >= bounds.z[0] && point.z <= bounds.z[1];
             }
         }
 
@@ -797,7 +1425,7 @@
                                 z: [-0.5, 0.5]
                             }
                         ],
-                        multiplier: 1.5  // Wings are more vulnerable
+                        multiplier: 0.5  // Wings are more vulnerable
                     }
                 };
 
@@ -1620,7 +2248,7 @@
                 if (this.parts && this.parts.rightArm && this.parts.leftArm) {
                     // Set initial arm rotations
                     this.parts.rightArm.rotation.set(0, 0, Math.PI / 3);
-                    this.parts.leftArm.rotation.set(0, 0, -Math.PI / 9);
+                    this.parts.leftArm.rotation.set(0, 0, -Math.PI / 5);
                 }
             }
 
@@ -1892,7 +2520,7 @@
 
                 // After creating arms, set their initial positions and rotations
                 if (leftArm && rightArm) {
-                    leftArm.rotation.set(0, 0, -Math.PI / 9);  // Slight outward angle
+                    leftArm.rotation.set(0, 0, -Math.PI / 5);  // Slight outward angle
                     rightArm.rotation.set(0, 0, Math.PI / 3);  // Club holding position
                 }
             }
@@ -1945,7 +2573,7 @@
                     this.mesh.rotation.y = targetAngle;
                     
                     const chaseTime = Date.now() - this.chaseStartTime;
-                    const canThrowClub = chaseTime > 7000 && this.hasClub && distanceToPlayer > 10;
+                    const canThrowClub = chaseTime > 2500 && this.hasClub && distanceToPlayer > 7;
                     
                     if (canThrowClub) {
                         const hasLineOfSight = !this.game.checkCollision(
@@ -2030,8 +2658,8 @@
                                         
                                         // Return to original positions
                                         this.parts.club.rotation.z = endRotation + (startRotation - endRotation) * returnEase;
-                                        this.parts.rightArm.rotation.z = Math.PI / 3 * returnEase;
-                                        this.parts.leftArm.rotation.z = -Math.PI / 9 * returnEase;
+                                        this.parts.rightArm.rotation.z = Math.PI / 3;
+                                        this.parts.leftArm.rotation.z = -Math.PI / 5;
                                         
                                         if (returnProgress < 1) {
                                             requestAnimationFrame(returnToIdle);
@@ -2256,7 +2884,7 @@
                 
                 // Reset arm positions
                 this.parts.rightArm.rotation.set(0, 0, Math.PI / 3);
-                this.parts.leftArm.rotation.set(0, 0, -Math.PI / 9);
+                this.parts.leftArm.rotation.set(0, 0, -Math.PI / 5);
                 
                 // Force upright position while maintaining horizontal orientation
                 this.mesh.position.copy(currentPos);
@@ -2290,12 +2918,12 @@
                             {  // Left head
                                 x: [-0.8, -0.1],
                                 y: [3.0, 3.7],
-                                z: [-0.4, 0.4]
+                                z: [-0.5, 0.5]
                             },
                             {  // Right head
                                 x: [0.1, 0.8],
                                 y: [3.0, 3.7],
-                                z: [-0.4, 0.4]
+                                z: [-0.5, 0.5]
                             }
                         ],
                         multiplier: 1.5  // Headshots do more damage
@@ -2304,9 +2932,9 @@
                         bounds: {
                             x: [-0.8, 0.8],
                             y: [2.2, 3.0],
-                            z: [-0.4, 0.4]
+                            z: [-0.5, 0.5]
                         },
-                        multiplier: 0.8  // Upper body is more resistant
+                        multiplier: 0.1  // Upper body is normal damage
                     },
                     belly: {
                         bounds: {
@@ -2319,32 +2947,32 @@
                     arms: {
                         bounds: [
                             {  // Left arm
-                                x: [-1.0, -0.4],
+                                x: [-1.4, -0.8],
                                 y: [1.4, 2.8],
-                                z: [-0.3, 0.3]
+                                z: [-0.5, 0.5]
                             },
                             {  // Right arm
-                                x: [0.4, 1.0],
+                                x: [0.8, 1.4],
                                 y: [1.4, 2.8],
-                                z: [-0.3, 0.3]
+                                z: [-0.5, 0.5]
                             }
                         ],
-                        multiplier: 1.0  // Normal damage for arms
+                        multiplier: 0.5  // Reduced damage for arms
                     },
                     legs: {
                         bounds: [
                             {  // Left leg
                                 x: [-0.6, -0.2],
                                 y: [0.1, 1.4],
-                                z: [-0.4, 0.4]
+                                z: [-0.5, 0.5]
                             },
                             {  // Right leg
                                 x: [0.2, 0.6],
                                 y: [0.1, 1.4],
-                                z: [-0.4, 0.4]
+                                z: [-0.5, 0.5]
                             }
                         ],
-                        multiplier: 1.0  // Normal damage for legs
+                        multiplier: 0.5  // Reduced damage for legs
                     },
                     club: {
                         bounds: {
@@ -2433,6 +3061,15 @@
                         { mazeSize: 53, enemies: 43 }    // Level 20 (Final Level)
                     ],
                     weapons: {
+                        grapplingHook: {
+                            cooldown: 100,
+                            ammo: Infinity,
+                            maxAmmo: Infinity,
+                            speed: 0.5,
+                            recoil: 0.1,
+                            hookRange: 50,
+                            pullSpeed: 0.3
+                        },
                         pistol: { 
                             damage: 20, 
                             cooldown: 500, 
@@ -2465,16 +3102,16 @@
                             explosionRadius: 5, 
                             selfDamage: 20,
                             cooldown: 1000, 
-                            ammo: 10, 
-                            maxAmmo: 20, 
+                            ammo: 20, 
+                            maxAmmo: 60, 
                             speed: 0.7,
                             recoil: 0.4  // Strong recoil for rocket launcher
                         },
                         railgun: {
                             damage: 100,
                             cooldown: 1500,
-                            ammo: 50,
-                            maxAmmo: 100,
+                            ammo: 20,
+                            maxAmmo: 60,
                             beamColor: 0x00ffff,
                             beamDuration: 500,
                             piercing: true,
@@ -2528,12 +3165,21 @@
                     isMouseDown: false,
                     isGameOver: false,
                     currentWeapon: 'pistol',
+                    lastUsedWeapon: null,  // Add this line to track last used weapon
                     weapons: {
-                        pistol: { owned: true, ammo: Infinity },  // Set pistol ammo to Infinity
-                        shotgun: { owned: false, ammo: 0 },
-                        machinegun: { owned: false, ammo: 0 },
-                        rocketLauncher: { owned: false, ammo: 0 },
-                        railgun: { owned: false, ammo: 0 }
+                        grapplingHook: { owned: true, ammo: Infinity, lastShotTime: 0 },
+                        pistol: { owned: true, ammo: Infinity, lastShotTime: 0 },
+                        shotgun: { owned: false, ammo: 0, lastShotTime: 0 },
+                        machinegun: { owned: false, ammo: 0, lastShotTime: 0 },
+                        rocketLauncher: { owned: false, ammo: 0, lastShotTime: 0 },
+                        railgun: { owned: false, ammo: 0, lastShotTime: 0 }
+                    },
+                    grappling: {
+                        isHooked: false,
+                        hookPoint: null,
+                        hook: null,
+                        swingVelocity: new THREE.Vector3(0, 0, 0),
+                        lastPullDirection: new THREE.Vector3(0, 0, 0)
                     },
                     powerups: {
                         speed: { active: false, endTime: 0 },
@@ -2635,8 +3281,9 @@
                         
                         maze[startX][startZ] = 0;
                         
+                        // Modified to create larger corridors
                         function addFrontiers(x, z) {
-                            const dirs = [[0, 2], [2, 0], [0, -2], [-2, 0]];
+                            const dirs = [[0, 3], [3, 0], [0, -3], [-3, 0]]; // Increased step size
                             dirs.forEach(([dx, dz]) => {
                                 const nx = x + dx;
                                 const nz = z + dz;
@@ -2654,7 +3301,7 @@
                             frontiers.splice(randIndex, 1);
                             
                             const neighbors = [];
-                            const dirs = [[0, 2], [2, 0], [0, -2], [-2, 0]];
+                            const dirs = [[0, 3], [3, 0], [0, -3], [-3, 0]]; // Increased step size
                             dirs.forEach(([dx, dz]) => {
                                 const nx = fx + dx;
                                 const nz = fz + dz;
@@ -2665,33 +3312,61 @@
                             
                             if (neighbors.length > 0) {
                                 const [nx, nz] = neighbors[Math.floor(Math.random() * neighbors.length)];
-                                const mx = (fx + nx) / 2;
-                                const mz = (fz + nz) / 2;
-                                maze[fx][fz] = 0;
-                                maze[mx][mz] = 0;
+                                // Clear path between points
+                                const dx = (fx - nx) / 3;
+                                const dz = (fz - nz) / 3;
+                                for (let i = 0; i <= 3; i++) {
+                                    const x = nx + dx * i;
+                                    const z = nz + dz * i;
+                                    maze[Math.floor(x)][Math.floor(z)] = 0;
+                                }
                                 addFrontiers(fx, fz);
                             }
                         }
                         
-                        // Create more open spaces by randomly removing walls
+                        // Create more open spaces by strategically removing walls
                         for (let x = 1; x < maze.length - 1; x++) {
                             for (let z = 1; z < maze[0].length - 1; z++) {
-                                if (maze[x][z] === 1 && Math.random() < 0.4) { // 40% chance to remove walls
-                                    maze[x][z] = 0;
+                                if (maze[x][z] === 1) {
+                                    // Count adjacent empty spaces
+                                    let emptyNeighbors = 0;
+                                    for (let dx = -1; dx <= 1; dx++) {
+                                        for (let dz = -1; dz <= 1; dz++) {
+                                            if (dx === 0 && dz === 0) continue;
+                                            if (maze[x + dx]?.[z + dz] === 0) emptyNeighbors++;
+                                        }
+                                    }
+                                    
+                                    // Remove walls that would create nice open areas
+                                    if (emptyNeighbors >= 5) { // If most neighbors are empty
+                                        maze[x][z] = 0;
+                                    }
+                                    // Keep walls that form continuous lines
+                                    else if (
+                                        (maze[x-1]?.[z] === 1 && maze[x+1]?.[z] === 1) || // Horizontal wall
+                                        (maze[x]?.[z-1] === 1 && maze[x]?.[z+1] === 1)    // Vertical wall
+                                    ) {
+                                        // 80% chance to keep continuous walls
+                                        if (Math.random() > 0.2) maze[x][z] = 1;
+                                    }
+                                    // Remove isolated walls
+                                    else if (emptyNeighbors >= 7) {
+                                        maze[x][z] = 0;
+                                    }
                                 }
                             }
                         }
                         
-                        // Ensure starting area is clear
-                        maze[startX][startZ] = 0;
-                        maze[startX+1][startZ] = 0;
-                        maze[startX-1][startZ] = 0;
-                        maze[startX][startZ+1] = 0;
-                        maze[startX][startZ-1] = 0;
-                        maze[startX+1][startZ+1] = 0;
-                        maze[startX-1][startZ-1] = 0;
-                        maze[startX+1][startZ-1] = 0;
-                        maze[startX-1][startZ+1] = 0;
+                        // Ensure starting area is clear with a larger radius
+                        for (let dx = -2; dx <= 2; dx++) {
+                            for (let dz = -2; dz <= 2; dz++) {
+                                const x = startX + dx;
+                                const z = startZ + dz;
+                                if (x >= 0 && x < maze.length && z >= 0 && z < maze[0].length) {
+                                    maze[x][z] = 0;
+                                }
+                            }
+                        }
                     }
                     
                     primMaze(maze);
@@ -2720,200 +3395,7 @@
                     return true;
                 });
 
-                // Load textures
-                const textureLoader = new THREE.TextureLoader();
-                const loadTexture = (path) => {
-                    console.log(`Attempting to load texture: ${path}`);
-                    return new Promise((resolve, reject) => {
-                        // First try to load as an Image to verify the path
-                        const img = new Image();
-                        img.onload = () => {
-                            console.log(`Image pre-check successful for: ${path}`);
-                            // Now load with TextureLoader
-                            textureLoader.load(
-                                path,
-                                (texture) => {
-                                    console.log(`Successfully loaded texture: ${path}`);
-                                    resolve(texture);
-                                },
-                                (xhr) => {
-                                    console.log(`${path}: ${(xhr.loaded / xhr.total * 100)}% loaded`);
-                                },
-                                (error) => {
-                                    console.error(`Error loading texture ${path}:`, error);
-                                    reject(error);
-                                }
-                            );
-                        };
-                        img.onerror = (error) => {
-                            console.error(`Image pre-check failed for: ${path}`, error);
-                            reject(error);
-                        };
-                        img.src = path;
-                    });
-                };
-
-                // Create loading promises
-                Promise.all([
-                    // Floor textures
-                    loadTexture('textures/floor/Tiles090_1K-JPG_Color.jpg'),
-                    loadTexture('textures/floor/Tiles090_1K-JPG_NormalGL.jpg'),
-                    loadTexture('textures/floor/Tiles090_1K-JPG_Roughness.jpg'),
-                    loadTexture('textures/floor/Tiles090_1K-JPG_AmbientOcclusion.jpg'),
-                    // Wall textures
-                    loadTexture('textures/wall/Tiles115_1K-JPG_Color.jpg'),
-                    loadTexture('textures/wall/Tiles115_1K-JPG_NormalGL.jpg'),
-                    loadTexture('textures/wall/Tiles115_1K-JPG_Roughness.jpg'),
-                    loadTexture('textures/wall/Tiles115_1K-JPG_AmbientOcclusion.jpg')
-                ]).then(([
-                    floorColorMap,
-                    floorNormalMap,
-                    floorRoughnessMap,
-                    floorAOMap,
-                    wallColorMap,
-                    wallNormalMap,
-                    wallRoughnessMap,
-                    wallAOMap
-                ]) => {
-                    // Configure texture settings
-                    [floorColorMap, floorNormalMap, floorRoughnessMap, floorAOMap].forEach(texture => {
-                        texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-                        texture.repeat.set(this.config.mazeSize/2, this.config.mazeSize/2);
-                        texture.encoding = THREE.sRGBEncoding;
-                    });
-                    
-                    [wallColorMap, wallNormalMap, wallRoughnessMap, wallAOMap].forEach(texture => {
-                        texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-                        texture.repeat.set(1, 2);
-                        texture.encoding = THREE.sRGBEncoding;
-                    });
-
-                    // Create floor
-                    const floorGeometry = new THREE.PlaneGeometry(
-                        this.config.mazeSize * this.config.cellSize, 
-                        this.config.mazeSize * this.config.cellSize,
-                        1, // Reduced segments
-                        1
-                    );
-                    const floorMaterial = new THREE.MeshStandardMaterial({ 
-                        map: floorColorMap,
-                        normalMap: floorNormalMap,
-                        roughnessMap: floorRoughnessMap,
-                        aoMap: floorAOMap,
-                        normalScale: new THREE.Vector2(1, 1),
-                        roughness: 0.8,
-                        metalness: 0.2
-                    });
-                    const floor = new THREE.Mesh(floorGeometry, floorMaterial);
-                    floor.rotation.x = -Math.PI / 2;
-                    floor.receiveShadow = false;
-                    floor.geometry.setAttribute('uv2', floor.geometry.attributes.uv);
-                    this.scene.add(floor);
-
-                    // Create wall material
-                    const wallGeometry = new THREE.BoxGeometry(
-                        this.config.cellSize, 
-                        4, 
-                        this.config.cellSize,
-                        1, // Reduced segments
-                        1,
-                        1
-                    );
-                    const wallMaterial = new THREE.MeshStandardMaterial({ 
-                        map: wallColorMap,
-                        normalMap: wallNormalMap,
-                        roughnessMap: wallRoughnessMap,
-                        aoMap: wallAOMap,
-                        normalScale: new THREE.Vector2(1, 1),
-                        roughness: 0.7,
-                        metalness: 0.3
-                    });
-                    wallGeometry.setAttribute('uv2', wallGeometry.attributes.uv);
-
-                    // Create walls
-                    for (let x = 0; x < this.config.mazeSize; x++) {
-                        for (let z = 0; z < this.config.mazeSize; z++) {
-                            if (this.maze[x][z] === 1) {
-                                const wall = new THREE.Mesh(wallGeometry, wallMaterial);
-                                wall.position.set(
-                                    (x - this.config.mazeSize/2) * this.config.cellSize,
-                                    2,
-                                    (z - this.config.mazeSize/2) * this.config.cellSize
-                                );
-                                wall.castShadow = false;
-                                wall.receiveShadow = false;
-                                wall.userData.isWall = true;
-                                wall.userData.gridX = x;
-                                wall.userData.gridZ = z;
-                                this.walls.push(wall);
-                                this.scene.add(wall);
-                            }
-                        }
-                    }
-
-                    // Create boundary walls
-                    const totalSize = this.config.mazeSize * this.config.cellSize;
-                    const halfSize = totalSize / 2;
-                    
-                    // North wall
-                    const northWall = new THREE.Mesh(
-                        new THREE.BoxGeometry(totalSize + this.config.cellSize, 4, this.config.cellSize, 1, 1, 1),
-                        wallMaterial
-                    );
-                    northWall.position.set(0, 2, -halfSize - this.config.cellSize/2);
-                    northWall.userData.isWall = true;
-                    northWall.castShadow = false;
-                    northWall.receiveShadow = false;
-                    this.scene.add(northWall);
-                    this.walls.push(northWall);
-
-                    // South wall
-                    const southWall = new THREE.Mesh(
-                        new THREE.BoxGeometry(totalSize + this.config.cellSize, 4, this.config.cellSize, 1, 1, 1),
-                        wallMaterial
-                    );
-                    southWall.position.set(0, 2, halfSize + this.config.cellSize/2);
-                    southWall.userData.isWall = true;
-                    southWall.castShadow = false;
-                    southWall.receiveShadow = false;
-                    this.scene.add(southWall);
-                    this.walls.push(southWall);
-
-                    // East wall
-                    const eastWall = new THREE.Mesh(
-                        new THREE.BoxGeometry(this.config.cellSize, 4, totalSize + this.config.cellSize, 1, 1, 1),
-                        wallMaterial
-                    );
-                    eastWall.position.set(halfSize + this.config.cellSize/2, 2, 0);
-                    eastWall.userData.isWall = true;
-                    eastWall.castShadow = false;
-                    eastWall.receiveShadow = false;
-                    this.scene.add(eastWall);
-                    this.walls.push(eastWall);
-
-                    // West wall
-                    const westWall = new THREE.Mesh(
-                        new THREE.BoxGeometry(this.config.cellSize, 4, totalSize + this.config.cellSize, 1, 1, 1),
-                        wallMaterial
-                    );
-                    westWall.position.set(-halfSize - this.config.cellSize/2, 2, 0);
-                    westWall.userData.isWall = true;
-                    westWall.castShadow = false;
-                    westWall.receiveShadow = false;
-                    this.scene.add(westWall);
-                    this.walls.push(westWall);
-                }).catch(error => {
-                    console.error('Error loading textures:', error);
-                    // Fallback to basic materials if textures fail to load
-                    this.createLevelWithBasicMaterials();
-                });
-
-                this.findStartPosition();
-            }
-
-            // Fallback method for basic materials
-            createLevelWithBasicMaterials() {
-                console.log('Using fallback basic materials');
+                // Create floor with simple material
                 const floorGeometry = new THREE.PlaneGeometry(
                     this.config.mazeSize * this.config.cellSize, 
                     this.config.mazeSize * this.config.cellSize
@@ -2928,6 +3410,7 @@
                 floor.receiveShadow = false;
                 this.scene.add(floor);
 
+                // Create wall geometry and material
                 const wallGeometry = new THREE.BoxGeometry(
                     this.config.cellSize, 
                     4, 
@@ -2939,8 +3422,80 @@
                     metalness: 0.3
                 });
 
-                // Create walls (rest of the code remains the same as original)
-                // ... (copy the wall creation code from the original method)
+                // Create walls
+                for (let x = 0; x < this.config.mazeSize; x++) {
+                    for (let z = 0; z < this.config.mazeSize; z++) {
+                        if (this.maze[x][z] === 1) {
+                            const wall = new THREE.Mesh(wallGeometry, wallMaterial);
+                            wall.position.set(
+                                (x - this.config.mazeSize/2) * this.config.cellSize,
+                                2,
+                                (z - this.config.mazeSize/2) * this.config.cellSize
+                            );
+                            wall.castShadow = false;
+                            wall.receiveShadow = false;
+                            wall.userData.isWall = true;
+                            wall.userData.gridX = x;
+                            wall.userData.gridZ = z;
+                            this.walls.push(wall);
+                            this.scene.add(wall);
+                        }
+                    }
+                }
+
+                // Create boundary walls
+                const totalSize = this.config.mazeSize * this.config.cellSize;
+                const halfSize = totalSize / 2;
+                
+                // North wall
+                const northWall = new THREE.Mesh(
+                    new THREE.BoxGeometry(totalSize + this.config.cellSize, 4, this.config.cellSize),
+                    wallMaterial
+                );
+                northWall.position.set(0, 2, -halfSize - this.config.cellSize/2);
+                northWall.userData.isWall = true;
+                northWall.castShadow = false;
+                northWall.receiveShadow = false;
+                this.scene.add(northWall);
+                this.walls.push(northWall);
+
+                // South wall
+                const southWall = new THREE.Mesh(
+                    new THREE.BoxGeometry(totalSize + this.config.cellSize, 4, this.config.cellSize),
+                    wallMaterial
+                );
+                southWall.position.set(0, 2, halfSize + this.config.cellSize/2);
+                southWall.userData.isWall = true;
+                southWall.castShadow = false;
+                southWall.receiveShadow = false;
+                this.scene.add(southWall);
+                this.walls.push(southWall);
+
+                // East wall
+                const eastWall = new THREE.Mesh(
+                    new THREE.BoxGeometry(this.config.cellSize, 4, totalSize + this.config.cellSize),
+                    wallMaterial
+                );
+                eastWall.position.set(halfSize + this.config.cellSize/2, 2, 0);
+                eastWall.userData.isWall = true;
+                eastWall.castShadow = false;
+                eastWall.receiveShadow = false;
+                this.scene.add(eastWall);
+                this.walls.push(eastWall);
+
+                // West wall
+                const westWall = new THREE.Mesh(
+                    new THREE.BoxGeometry(this.config.cellSize, 4, totalSize + this.config.cellSize),
+                    wallMaterial
+                );
+                westWall.position.set(-halfSize - this.config.cellSize/2, 2, 0);
+                westWall.userData.isWall = true;
+                westWall.castShadow = false;
+                westWall.receiveShadow = false;
+                this.scene.add(westWall);
+                this.walls.push(westWall);
+
+                this.findStartPosition();
             }
 
             findStartPosition() {
@@ -2959,7 +3514,7 @@
                 document.addEventListener('keydown', (e) => {
                     this.keys[e.key.toLowerCase()] = true;
                     
-                    if (e.code === 'Space' && !this.isJumping) {
+                    if (e.code === 'Space' && !this.isJumping && !this.state.grappling.isHooked) {
                         this.jumpVelocity = 0.3;
                         this.isJumping = true;
                     }
@@ -2974,12 +3529,39 @@
                         }, 100);
                     }
 
-                    if (e.key >= '1' && e.key <= '5') {
+                    // Add Q key handler for weapon switching
+                    if (e.key.toLowerCase() === 'q') {
+                        if (this.state.lastUsedWeapon && this.state.weapons[this.state.lastUsedWeapon].owned) {
+                            // Swap current and last used weapons
+                            const temp = this.state.currentWeapon;
+                            this.state.currentWeapon = this.state.lastUsedWeapon;
+                            this.state.lastUsedWeapon = temp;
+                            this.state.lastShotTime = 0;
+                            
+                            // Update HUD and weapon display
+                            const crosshair = document.getElementById('crosshair');
+                            if (crosshair) {
+                                crosshair.style.display = 'block';
+                            }
+                            
+                            this.updateHUD();
+                            this.updateWeaponPanel();
+                            
+                            // Play weapon switch sound
+                            this.playSound(440, 0.1, 'sine', 0.2);
+                        }
+                    }
+
+                    if (e.key >= '1' && e.key <= '6') {
                         const weaponIndex = parseInt(e.key) - 1;
-                        const weapons = ['pistol', 'shotgun', 'machinegun', 'rocketLauncher', 'railgun'];
+                        const weapons = ['grapplingHook', 'pistol', 'shotgun', 'machinegun', 'rocketLauncher', 'railgun'];
                         const selectedWeapon = weapons[weaponIndex];
                         
                         if (this.state.weapons[selectedWeapon] && this.state.weapons[selectedWeapon].owned) {
+                            // Update last used weapon before switching
+                            if (selectedWeapon !== this.state.currentWeapon) {
+                                this.state.lastUsedWeapon = this.state.currentWeapon;
+                            }
                             this.state.currentWeapon = selectedWeapon;
                             this.state.lastShotTime = 0;
                             console.log(`Switched to ${selectedWeapon}, ammo: ${this.state.weapons[selectedWeapon].ammo}`);
@@ -3199,75 +3781,135 @@
             updatePlayer() {
                 if (this.state.isPaused) return;
 
-                // Handle jumping
+                // Handle player knockback
+                if (this.playerKnockback && this.playerKnockbackTime) {
+                    const elapsedTime = Date.now() - this.playerKnockbackTime;
+                    const progress = Math.min(elapsedTime / this.playerKnockbackDuration, 1.0);
+                    
+                    if (progress < 1.0) {
+                        // Calculate knockback strength based on time (starts strong, diminishes)
+                        const strength = (1.0 - progress) * 0.2;
+                        
+                        // Test X position first
+                        const testPosX = this.camera.position.clone();
+                        testPosX.x += this.playerKnockback.x * strength;
+                        
+                        // Only apply if no collision
+                        if (!this.checkCollision(testPosX)) {
+                            this.camera.position.x = testPosX.x;
+                        }
+                        
+                        // Test Z position next
+                        const testPosZ = this.camera.position.clone();
+                        testPosZ.z += this.playerKnockback.z * strength;
+                        
+                        // Only apply if no collision
+                        if (!this.checkCollision(testPosZ)) {
+                            this.camera.position.z = testPosZ.z;
+                        }
+                    } else {
+                        // Clear knockback after duration
+                        this.playerKnockback = null;
+                        this.playerKnockbackTime = null;
+                    }
+                }
+
+                // Handle jumping and grappling-related movement
                 if (this.isJumping) {
-                    this.jumpVelocity -= 0.015;
+                    this.jumpVelocity -= 0.015;  // Apply gravity
                     this.camera.position.y += this.jumpVelocity;
 
+                    // Check if we've hit the ground
                     if (this.camera.position.y <= this.config.playerHeight) {
                         this.camera.position.y = this.config.playerHeight;
                         this.jumpVelocity = 0;
                         this.isJumping = false;
+                        
+                        // Clear swing velocity when landing
+                        this.state.grappling.swingVelocity.set(0, 0, 0);
                     }
                 }
 
-                const moveSpeed = this.state.powerups.speed.active ? 
-                    this.config.playerSpeed * 2 : 
-                    this.config.playerSpeed;
-
-                const direction = new THREE.Vector3(0, 0, -1);
-                direction.applyQuaternion(this.camera.quaternion);
-                direction.y = 0;
-                direction.normalize();
-
-                const right = new THREE.Vector3(1, 0, 0);
-                right.applyQuaternion(this.camera.quaternion);
-                right.normalize();
-
-                const currentPos = this.camera.position.clone();
-                const newPosition = currentPos.clone();
-                let moved = false;
-
-                // Calculate movement vector
-                const movement = new THREE.Vector3(0, 0, 0);
-                if (this.keys.w) movement.add(direction.clone().multiplyScalar(moveSpeed));
-                if (this.keys.s) movement.sub(direction.clone().multiplyScalar(moveSpeed));
-                if (this.keys.a) movement.sub(right.clone().multiplyScalar(moveSpeed));
-                if (this.keys.d) movement.add(right.clone().multiplyScalar(moveSpeed));
-
-                // Try movement along X axis
-                if (movement.x !== 0) {
-                    newPosition.x = currentPos.x + movement.x;
+                // Apply swing velocity if we have it (applies to both hooked and non-hooked states)
+                if (this.state.grappling.swingVelocity.lengthSq() > 0) {
+                    const newPosition = this.camera.position.clone();
+                    newPosition.x += this.state.grappling.swingVelocity.x;
+                    newPosition.z += this.state.grappling.swingVelocity.z;
+                    
+                    // Only apply if no collision
                     if (!this.checkCollision(newPosition)) {
                         this.camera.position.x = newPosition.x;
-                        moved = true;
-                    }
-                    newPosition.x = currentPos.x; // Reset for Z movement check
-                }
-
-                // Try movement along Z axis
-                if (movement.z !== 0) {
-                    newPosition.z = currentPos.z + movement.z;
-                    if (!this.checkCollision(newPosition)) {
                         this.camera.position.z = newPosition.z;
-                        moved = true;
+                    } else {
+                        // Reset swing velocity on collision
+                        this.state.grappling.swingVelocity.set(0, 0, 0);
                     }
+                    
+                    // Gradually reduce swing velocity
+                    this.state.grappling.swingVelocity.multiplyScalar(0.98);
                 }
 
-                // If we hit a wall, try sliding along it
-                if (!moved && movement.length() > 0) {
-                    const slideDirections = [
-                        new THREE.Vector3(1, 0, 0),
-                        new THREE.Vector3(-1, 0, 0),
-                        new THREE.Vector3(0, 0, 1),
-                        new THREE.Vector3(0, 0, -1)
-                    ];
 
-                    for (const slideDir of slideDirections) {
-                        const slidePos = currentPos.clone().add(slideDir.multiplyScalar(moveSpeed));
-                        if (!this.checkCollision(slidePos)) {
-                            this.camera.position.copy(slidePos);
-                            break;
+                // Only allow normal movement when not hooked
+                if (!this.state.grappling.isHooked) {
+                    const moveSpeed = this.state.powerups.speed.active ? 
+                        this.config.playerSpeed * 2 : 
+                        this.config.playerSpeed;
+
+                    const direction = new THREE.Vector3(0, 0, -1);
+                    direction.applyQuaternion(this.camera.quaternion);
+                    direction.y = 0;
+                    direction.normalize();
+
+                    const right = new THREE.Vector3(1, 0, 0);
+                    right.applyQuaternion(this.camera.quaternion);
+                    right.normalize();
+
+                    const currentPos = this.camera.position.clone();
+                    const newPosition = currentPos.clone();
+                    let moved = false;
+
+                    // Calculate movement vector
+                    const movement = new THREE.Vector3(0, 0, 0);
+                    if (this.keys.w) movement.add(direction.clone().multiplyScalar(moveSpeed));
+                    if (this.keys.s) movement.sub(direction.clone().multiplyScalar(moveSpeed));
+                    if (this.keys.a) movement.sub(right.clone().multiplyScalar(moveSpeed));
+                    if (this.keys.d) movement.add(right.clone().multiplyScalar(moveSpeed));
+
+                    // Try movement along X axis
+                    if (movement.x !== 0) {
+                        newPosition.x = currentPos.x + movement.x;
+                        if (!this.checkCollision(newPosition)) {
+                            this.camera.position.x = newPosition.x;
+                            moved = true;
+                        }
+                        newPosition.x = currentPos.x; // Reset for Z movement check
+                    }
+
+                    // Try movement along Z axis
+                    if (movement.z !== 0) {
+                        newPosition.z = currentPos.z + movement.z;
+                        if (!this.checkCollision(newPosition)) {
+                            this.camera.position.z = newPosition.z;
+                            moved = true;
+                        }
+                    }
+
+                    // If we hit a wall, try sliding along it
+                    if (!moved && movement.length() > 0) {
+                        const slideDirections = [
+                            new THREE.Vector3(1, 0, 0),
+                            new THREE.Vector3(-1, 0, 0),
+                            new THREE.Vector3(0, 0, 1),
+                            new THREE.Vector3(0, 0, -1)
+                        ];
+
+                        for (const slideDir of slideDirections) {
+                            const slidePos = currentPos.clone().add(slideDir.multiplyScalar(moveSpeed));
+                            if (!this.checkCollision(slidePos)) {
+                                this.camera.position.copy(slidePos);
+                                break;
+                            }
                         }
                     }
                 }
@@ -3287,6 +3929,9 @@
                         break;
                     case 'giant':
                         monster = new GiantMonster(this);
+                        break;
+                    case 'charger':
+                        monster = new ChargerMonster(this);
                         break;
                     default:
                         monster = new GroundMonster(this);
@@ -3341,9 +3986,10 @@
                 const currentTime = Date.now();
                 const currentWeapon = this.state.currentWeapon;
                 const weaponConfig = this.config.weapons[currentWeapon];
+                const weaponState = this.state.weapons[currentWeapon];
                 
                 // Check if current weapon is out of ammo (skip check for pistol)
-                if (currentWeapon !== 'pistol' && this.state.weapons[currentWeapon].ammo <= 0) {
+                if (currentWeapon !== 'pistol' && weaponState.ammo <= 0) {
                     // Find the previous weapon that has ammo
                     const weaponOrder = ['railgun', 'rocketLauncher', 'machinegun', 'shotgun', 'pistol'];
                     const currentIndex = weaponOrder.indexOf(currentWeapon);
@@ -3359,6 +4005,9 @@
                     
                     // If we found a weapon with ammo, switch to it
                     if (newWeapon) {
+                        if (newWeapon !== this.state.currentWeapon) {
+                            this.state.lastUsedWeapon = this.state.currentWeapon;
+                        }
                         this.state.currentWeapon = newWeapon;
                         this.updateWeaponPanel();
                         // Play weapon switch sound
@@ -3371,7 +4020,8 @@
                     return;
                 }
                 
-                if (currentTime - this.state.lastShotTime < weaponConfig.cooldown) {
+                // Check weapon-specific cooldown
+                if (currentTime - weaponState.lastShotTime < weaponConfig.cooldown) {
                     return;
                 }
                 
@@ -3379,10 +4029,12 @@
                 this.state.recoil.current += weaponConfig.recoil;
                 this.state.recoil.lastShootTime = currentTime;
                 
-                this.state.lastShotTime = currentTime;
+                // Update weapon-specific last shot time
+                weaponState.lastShotTime = currentTime;
+
                 // Only decrease ammo for non-pistol weapons
                 if (currentWeapon !== 'pistol') {
-                    this.state.weapons[currentWeapon].ammo--;
+                    weaponState.ammo--;
                 }
                 this.updateHUD();
                 
@@ -3398,6 +4050,9 @@
                         break;
                     case 'rocketLauncher':
                         this.fireRocket();
+                        break;
+                    case 'grapplingHook':
+                        this.fireGrapplingHook();
                         break;
                     default:
                         this.fireBullet(weaponConfig.damage, weaponConfig.speed);
@@ -3931,6 +4586,8 @@
                         monsterType = 'flying';
                     } else if (monster instanceof SpiderMonster) {
                         monsterType = 'spider';
+                    } else if (monster instanceof ChargerMonster) {
+                        monsterType = 'charger';
                     } else if (monster instanceof ArcherMonster) {
                         monsterType = 'ground';  // Archer uses ground death effect
                     }
@@ -3945,7 +4602,17 @@
                     
                     this.sounds.enemyDeath.play();
                     
-                    this.state.enemiesRemaining = this.monsters.length;
+                    // Spawn a new monster from the queue if available
+                    if (this.monsterQueue && this.monsterQueue.length > 0) {
+                        const newMonsterType = this.monsterQueue.shift();
+                        const newMonster = this.createMonster(newMonsterType);
+                        this.monsters.push(newMonster);
+                        this.scene.add(newMonster);
+                        console.log(`Spawned new ${newMonsterType} monster from queue. Remaining in queue: ${this.monsterQueue.length}`);
+                    }
+                    
+                    // Update the total remaining count (active + queued)
+                    this.state.enemiesRemaining = (this.monsterQueue ? this.monsterQueue.length : 0) + this.monsters.length;
                     document.getElementById('enemies').textContent = this.state.enemiesRemaining;
                     
                     if (this.monsters.length === 0 && this.gameMode !== 'testing') {
@@ -3961,9 +4628,10 @@
             createMonsterDeathEffect(position, monsterType = 'ground') {
                 // Create death blood splatter with type-specific color
                 const deathColors = {
-                    ground: 0x990000,  // Red blood for ground monsters
-                    flying: 0x0000ff,  // Blue for flying monsters
-                    spider: 0x00ff00   // Green for spiders
+                    ground: 0x990000,    // Red blood for ground monsters
+                    flying: 0x0000ff,    // Blue for flying monsters
+                    spider: 0x00ff00,    // Green for spiders
+                    charger: 0x882222    // Dark red for charger (rhino-like creature)
                 };
 
                 const deathColor = deathColors[monsterType] || deathColors.ground;
@@ -4105,8 +4773,67 @@
                         particleSize: 0.05,
                         particleColor: 0x00ff00,
                         particleSpeed: 0.08
+                    },
+                    charger: {
+                        parts: [
+                            {
+                                name: 'body',
+                                geometry: new THREE.SphereGeometry(0.9, 16, 12),
+                                position: new THREE.Vector3(0, 0.7, 0),
+                                material: {
+                                    color: 0x403030,  // Dark brownish rhino skin
+                                    roughness: 0.9,
+                                    metalness: 0.2
+                                }
+                            },
+                            {
+                                name: 'head',
+                                geometry: new THREE.SphereGeometry(0.5, 12, 10),
+                                position: new THREE.Vector3(0, 1.3, 0.7),
+                                material: {
+                                    color: 0x403030,
+                                    roughness: 0.9,
+                                    metalness: 0.2
+                                }
+                            },
+                            {
+                                name: 'horn',
+                                geometry: new THREE.ConeGeometry(0.18, 0.9, 8),
+                                position: new THREE.Vector3(0, 1.5, 1.2),
+                                rotation: new THREE.Vector3(Math.PI/2, 0, 0),
+                                material: {
+                                    color: 0x8a7a6d,  // Bone-like horn color
+                                    roughness: 0.5,
+                                    metalness: 0.4
+                                }
+                            },
+                            {
+                                name: 'leftEye',
+                                geometry: new THREE.SphereGeometry(0.08, 8, 8),
+                                position: new THREE.Vector3(-0.25, 1.45, 1.2),
+                                material: {
+                                    color: 0xff0000,
+                                    emissive: 0xff0000,
+                                    emissiveIntensity: 0.3
+                                }
+                            },
+                            {
+                                name: 'rightEye',
+                                geometry: new THREE.SphereGeometry(0.08, 8, 8),
+                                position: new THREE.Vector3(0.25, 1.45, 1.2),
+                                material: {
+                                    color: 0xff0000,
+                                    emissive: 0xff0000,
+                                    emissiveIntensity: 0.3
+                                }
+                            }
+                        ],
+                        deathSound: { frequency: 60, duration: 0.4, type: 'sawtooth' },
+                        particleCount: 25,
+                        particleSize: 0.08,
+                        particleColor: 0x882222,
+                        particleSpeed: 0.07
                     }
-                    // Add new monster types here with their corpse configurations
                 };
                 
                 const config = monsterConfigs[monsterType] || monsterConfigs.ground;
@@ -4357,94 +5084,70 @@
                 spawnInitialMonsters() {
                     console.log('%c=== SPAWNING INITIAL MONSTERS ===', 'background: green; color: white; font-size: 14px; font-weight: bold;');
                     
+                    // Clear existing monsters
                     this.monsters.forEach(monster => this.scene.remove(monster));
                     this.monsters = [];
 
                     if (this.gameMode === 'testing') {
-                        // Remove test mode spawns - will be handled by spawn panel
                         console.log(`%cTest mode active - use spawn panel to create monsters`, 'color: lime; font-weight: bold');
-                    } else {
-                        // Original monster spawning for normal mode
-                        if (this.state.level === 1) {
-                            // Level 1: 2 of each type
-                            for (let i = 0; i < 2; i++) {
-                                // Spawn ground monsters
-                                console.log(`%cSpawning ground monster ${i+1}/2`, 'color: green; font-weight: bold');
-                                const groundMonster = this.createMonster('ground');
-                                this.monsters.push(groundMonster);
-                                this.scene.add(groundMonster);
-
-                                // Spawn flying monsters
-                                console.log(`%cSpawning flying monster ${i+1}/2`, 'color: blue; font-weight: bold');
-                                const flyingMonster = this.createMonster('flying');
-                                this.monsters.push(flyingMonster);
-                                this.scene.add(flyingMonster);
-
-                                // Spawn archer monsters
-                                console.log(`%cSpawning archer monster ${i+1}/2`, 'color: orange; font-weight: bold');
-                                const archerMonster = this.createMonster('archer');
-                                this.monsters.push(archerMonster);
-                                this.scene.add(archerMonster);
-
-                                // Spawn spider monsters
-                                console.log(`%cSpawning spider monster ${i+1}/2`, 'color: purple; font-weight: bold');
-                                const spiderMonster = this.createMonster('spider');
-                                this.monsters.push(spiderMonster);
-                                this.scene.add(spiderMonster);
-                            }
-                            
-                            console.log(`%cSpawned ${this.monsters.length} monsters (2 ground, 2 flying, 2 archer, 2 spider)`, 'color: lime; font-weight: bold');
-                        } else {
-                            // Calculate counts based on level for levels > 1
-                            const totalCount = 3 + (this.state.level - 1) * 2;
-                            const typeCount = Math.floor(totalCount / 4); // Changed from 3 to 4 to include spiders
-                            const remainder = totalCount % 4;
-                            
-                            const counts = {
-                                ground: typeCount + (remainder > 0 ? 1 : 0),
-                                flying: typeCount + (remainder > 1 ? 1 : 0),
-                                archer: typeCount + (remainder > 2 ? 1 : 0),
-                                spider: typeCount
-                            };
-
-                            // Spawn ground monsters
-                            for (let i = 0; i < counts.ground; i++) {
-                                console.log(`%cSpawning ground monster ${i+1}/${counts.ground}`, 'color: green; font-weight: bold');
-                                const monster = this.createMonster('ground');
-                                this.monsters.push(monster);
-                                this.scene.add(monster);
-                            }
-
-                            // Spawn flying monsters
-                            for (let i = 0; i < counts.flying; i++) {
-                                console.log(`%cSpawning flying monster ${i+1}/${counts.flying}`, 'color: blue; font-weight: bold');
-                                const monster = this.createMonster('flying');
-                                this.monsters.push(monster);
-                                this.scene.add(monster);
-                            }
-
-                            // Spawn archer monsters
-                            for (let i = 0; i < counts.archer; i++) {
-                                console.log(`%cSpawning archer monster ${i+1}/${counts.archer}`, 'color: orange; font-weight: bold');
-                                const monster = this.createMonster('archer');
-                                this.monsters.push(monster);
-                                this.scene.add(monster);
-                            }
-
-                            // Spawn spider monsters
-                            for (let i = 0; i < counts.spider; i++) {
-                                console.log(`%cSpawning spider monster ${i+1}/${counts.spider}`, 'color: purple; font-weight: bold');
-                                const monster = this.createMonster('spider');
-                                this.monsters.push(monster);
-                                this.scene.add(monster);
-                            }
-                            
-                            console.log(`%cSpawned ${this.monsters.length} monsters (${counts.ground} ground, ${counts.flying} flying, ${counts.archer} archer, ${counts.spider} spider)`, 'color: lime; font-weight: bold');
-                        }
+                        return;
                     }
 
-                    this.state.enemiesRemaining = this.monsters.length;
+                    // Calculate total monsters for this level
+                    const totalMonsters = 3 + (this.state.level - 1) * 2;
+                    
+                    // Initialize monster queue
+                    this.monsterQueue = [];
+                    
+                    // Fill queue with monster types
+                    for (let i = 0; i < totalMonsters; i++) {
+                        let type;
+                        const rand = Math.random();
+                        
+                        if (this.state.level < 5) {
+                            // Early levels: no giants, more basic monsters
+                            if (rand < 0.35) type = 'ground';
+                            else if (rand < 0.6) type = 'flying';
+                            else if (rand < 0.75) type = 'archer';
+                            else if (rand < 0.9) type = 'spider';
+                            else type = 'charger';
+                        } else if (this.state.level < 10) {
+                            // Mid levels: introduce giants
+                            if (rand < 0.25) type = 'ground';
+                            else if (rand < 0.45) type = 'flying';
+                            else if (rand < 0.65) type = 'archer';
+                            else if (rand < 0.8) type = 'spider';
+                            else if (rand < 0.9) type = 'giant';
+                            else type = 'charger';
+                        } else {
+                            // Later levels: more challenging monsters
+                            if (rand < 0.15) type = 'ground';
+                            else if (rand < 0.35) type = 'flying';
+                            else if (rand < 0.55) type = 'archer';
+                            else if (rand < 0.7) type = 'spider';
+                            else if (rand < 0.85) type = 'giant';
+                            else type = 'charger';
+                        }
+                        this.monsterQueue.push(type);
+                    }
+
+                    // Spawn initial wave (maximum 6 monsters)
+                    const initialSpawnCount = Math.min(6, totalMonsters);
+                    console.log(`%cSpawning initial wave of ${initialSpawnCount} monsters`, 'color: yellow; font-weight: bold');
+                    
+                    for (let i = 0; i < initialSpawnCount; i++) {
+                        const type = this.monsterQueue.shift();
+                        const monster = this.createMonster(type);
+                        this.monsters.push(monster);
+                        this.scene.add(monster);
+                        console.log(`%cSpawned ${type} monster (${i + 1}/${initialSpawnCount})`, 'color: green');
+                    }
+
+                    // Update enemy count display (active + queued)
+                    this.state.enemiesRemaining = this.monsterQueue.length + this.monsters.length;
                     document.getElementById('enemies').textContent = this.state.enemiesRemaining;
+                    
+                    console.log(`%cTotal monsters for level ${this.state.level}: ${totalMonsters} (${this.monsters.length} active, ${this.monsterQueue.length} in queue)`, 'color: lime; font-weight: bold');
                 }
 
                 animate() {
@@ -4461,7 +5164,8 @@
                         this.updatePowerups();
                         this.updateMinimap();
                         this.updateWeaponPanel();
-                        this.updateWeaponPosition(); // Make sure this is called
+                        this.updateWeaponPosition();
+                        this.updateGrapplingHook(); // Add this line
                     
                     // Update blood particles
                     if (this.bloodParticles && this.bloodParticles.length > 0) {
@@ -4760,6 +5464,21 @@
 
                         pauseMenu.innerHTML = `
                             <h2>GAME PAUSED</h2>
+                            <h3>Controls:</h3>
+                            <div style="text-align: left; margin: 20px;">
+                                <div style="margin: 10px 0;">
+                                    <span style="color: white;">WASD</span> - Movement
+                                </div>
+                                <div style="margin: 10px 0;">
+                                    <span style="color: white;">1-6</span> - Select Weapons
+                                </div>
+                                <div style="margin: 10px 0;">
+                                    <span style="color: white;">SPACEBAR</span> - Jump
+                                </div>
+                                <div style="margin: 10px 0;">
+                                    <span style="color: white;">Q</span> - Previous Weapon
+                                </div>
+                            </div>
                             <h3>Power-Ups Guide:</h3>
                             <div style="text-align: left; margin: 20px;">
                                 <div style="margin: 10px 0;">
@@ -4805,8 +5524,6 @@
                 }
 
                 nextLevel() {
-
-
                     this.state.level++;
                     
                     // Check if player has completed all levels
@@ -4842,18 +5559,8 @@
                     // Create new level with updated size
                     this.createLevel();
                     
-                    // Spawn new monsters based on level configuration
-                    for (let i = 0; i < levelConfig.enemies; i++) {
-                        const monster = this.createMonster();
-                        if (monster) {
-                            this.monsters.push(monster);
-                            this.scene.add(monster);
-                        }
-                    }
-                    
-                    // Update enemy count
-                    this.state.enemiesRemaining = this.monsters.length;
-                    document.getElementById('enemies').textContent = this.state.enemiesRemaining;
+                    // Use spawnInitialMonsters to handle monster spawning with proper distribution
+                    this.spawnInitialMonsters();
                     
                     // Spawn new weapons for the level
                     this.spawnInitialWeapons();
@@ -4890,15 +5597,23 @@
                         isGameOver: false,
                         isReloading: false,
                         isPaused: false,
-                        lastShootTime: 0,
                         isMouseDown: false,
                         currentWeapon: 'pistol',
+                        lastUsedWeapon: null,  // Add this line to track last used weapon
                         weapons: {
-                            pistol: { owned: true, ammo: Infinity },
-                            shotgun: { owned: false, ammo: 0 },
-                            machinegun: { owned: false, ammo: 0 },
-                            rocketLauncher: { owned: false, ammo: 0 },
-                            railgun: { owned: false, ammo: 0 }
+                            grapplingHook: { owned: true, ammo: Infinity, lastShotTime: 0 },
+                            pistol: { owned: true, ammo: Infinity, lastShotTime: 0 },
+                            shotgun: { owned: false, ammo: 0, lastShotTime: 0 },
+                            machinegun: { owned: false, ammo: 0, lastShotTime: 0 },
+                            rocketLauncher: { owned: false, ammo: 0, lastShotTime: 0 },
+                            railgun: { owned: false, ammo: 0, lastShotTime: 0 }
+                        },
+                        grappling: {
+                            isHooked: false,
+                            hookPoint: null,
+                            hook: null,
+                            swingVelocity: new THREE.Vector3(0, 0, 0),
+                            lastPullDirection: new THREE.Vector3(0, 0, 0)
                         },
                         powerups: {
                             speed: { active: false, endTime: 0 },
@@ -5299,6 +6014,51 @@
                     railgunContainer.add(railgunGroup);
                     weaponContainers.railgun = railgunContainer;
                     
+                    // Add grappling hook model
+                    const grapplingHookGroup = new THREE.Group();
+                    grapplingHookGroup.name = 'grapplingHook';
+                    
+                    // Main body
+                    const hookBody = new THREE.Mesh(
+                        new THREE.CylinderGeometry(0.05, 0.05, 0.3, 8),
+                        new THREE.MeshStandardMaterial({ 
+                            color: 0x444444,
+                            metalness: 0.8,
+                            roughness: 0.2
+                        })
+                    );
+                    hookBody.rotation.x = Math.PI / 2;
+                    
+                    // Hook mechanism
+                    const hookMechanism = new THREE.Mesh(
+                        new THREE.BoxGeometry(0.1, 0.1, 0.15),
+                        new THREE.MeshStandardMaterial({ 
+                            color: 0x666666,
+                            metalness: 0.7,
+                            roughness: 0.3
+                        })
+                    );
+                    hookMechanism.position.z = 0.2;
+                    
+                    // Handle
+                    const hookHandle = new THREE.Mesh(
+                        new THREE.CylinderGeometry(0.02, 0.02, 0.2, 8),
+                        new THREE.MeshStandardMaterial({ 
+                            color: 0x222222,
+                            metalness: 0.6,
+                            roughness: 0.4
+                        })
+                    );
+                    hookHandle.position.y = -0.15;
+                    
+                    grapplingHookGroup.add(hookBody);
+                    grapplingHookGroup.add(hookMechanism);
+                    grapplingHookGroup.add(hookHandle);
+                    
+                    const grapplingHookContainer = new THREE.Object3D();
+                    grapplingHookContainer.add(grapplingHookGroup);
+                    weaponContainers.grapplingHook = grapplingHookContainer;
+
                     // Store the models
                     this.weaponModels = weaponContainers;
                 }
@@ -5361,31 +6121,42 @@
                             const boxMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff });
                             powerupMesh = new THREE.Mesh(box, boxMaterial);
 
-                            // Add red cross
-                            const crossGeometry = new THREE.BoxGeometry(0.3, 0.1, 0.1);
-                            const crossMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+                            // Add bigger red cross
+                            const crossGeometry = new THREE.BoxGeometry(0.4, 0.1, 0.6);
+                            const crossMaterial = new THREE.MeshStandardMaterial({ 
+                                color: 0xff0000,
+                                emissive: 0xff0000,
+                                emissiveIntensity: 0.5
+                            });
                             const horizontalCross = new THREE.Mesh(crossGeometry, crossMaterial);
                             const verticalCross = new THREE.Mesh(crossGeometry, crossMaterial);
                             verticalCross.rotation.z = Math.PI / 2;
+
+
+                            // Move crosses slightly forward to be more visible
+                            horizontalCross.position.z = 0;
+                            verticalCross.position.z = 0;
+
                             powerupMesh.add(horizontalCross);
                             powerupMesh.add(verticalCross);
+
                             break;
 
                         case 'speed':
                             // Create red shoe with wings
-                            const shoeGeometry = new THREE.BoxGeometry(0.4, 0.2, 0.6);
+                            const shoeGeometry = new THREE.BoxGeometry(0.3, 0.2, 0.6);
                             const shoeMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
                             powerupMesh = new THREE.Mesh(shoeGeometry, shoeMaterial);
 
                             // Add wings
-                            const wingGeometry = new THREE.BoxGeometry(0.3, 0.1, 0.2);
+                            const wingGeometry = new THREE.BoxGeometry(0.1, 0.2, 0.4);
                             const wingMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff });
                             const leftWing = new THREE.Mesh(wingGeometry, wingMaterial);
                             const rightWing = new THREE.Mesh(wingGeometry, wingMaterial);
-                            leftWing.position.set(-0.3, 0.1, 0);
-                            rightWing.position.set(0.3, 0.1, 0);
-                            leftWing.rotation.z = Math.PI / 4;
-                            rightWing.rotation.z = -Math.PI / 4;
+                            leftWing.position.set(-0.15, 0.15, -0.25);
+                            rightWing.position.set(0.15, 0.15, -0.25);
+                            leftWing.rotation.x = Math.PI / 4;
+                            rightWing.rotation.x = Math.PI / 4;
                             powerupMesh.add(leftWing);
                             powerupMesh.add(rightWing);
                             break;
@@ -5459,7 +6230,7 @@
                                 new THREE.BoxGeometry(0.08, 0.12, 0.2),
                                 new THREE.MeshStandardMaterial({ color: 0x8B4513 })
                             );
-                            shotgunStock.position.set(0, 0.02, -0.2);
+                            shotgunStock.position.set(0, 0, -0.2);
                             
                             powerupMesh.add(shotgunBody);
                             powerupMesh.add(shotgunPump);
@@ -5695,6 +6466,10 @@
                                     // Get new weapon
                                     this.state.weapons[weapon].owned = true;
                                     this.state.weapons[weapon].ammo = this.config.weapons[weapon].ammo;
+                                    // Update last used weapon before switching to new weapon
+                                    if (weapon !== this.state.currentWeapon) {
+                                        this.state.lastUsedWeapon = this.state.currentWeapon;
+                                    }
                                     this.state.currentWeapon = weapon; // Auto-equip new weapon
                                     
                                     // Ensure crosshair is visible when getting new weapon
@@ -5919,7 +6694,7 @@
 
                     contentContainer.appendChild(faceContainer);
 
-                    const weapons = ['pistol', 'shotgun', 'machinegun', 'rocketLauncher', 'railgun'];
+                    const weapons = ['grapplingHook', 'pistol', 'shotgun', 'machinegun', 'rocketLauncher', 'railgun'];
                     weapons.forEach((weapon, index) => {
                         const weaponDiv = document.createElement('div');
                         weaponDiv.id = `weapon-${weapon}`;
@@ -5955,7 +6730,7 @@
                 }
 
                 updateWeaponPanel() {
-                    const weapons = ['pistol', 'shotgun', 'machinegun', 'rocketLauncher', 'railgun'];
+                    const weapons = ['grapplingHook', 'pistol', 'shotgun', 'machinegun', 'rocketLauncher', 'railgun'];
                     
                     weapons.forEach(weapon => {
                         const weaponDiv = document.getElementById(`weapon-${weapon}`);
@@ -5969,8 +6744,8 @@
 
                         if (this.state.weapons[weapon].owned) {
                             weaponDiv.style.opacity = '1';
-                            if (weapon === 'pistol') {
-                                ammoDiv.textContent = '∞';  // Show infinity symbol for pistol
+                            if (weapon === 'pistol' || weapon === 'grapplingHook') {
+                                ammoDiv.textContent = '∞';  // Show infinity symbol for pistol and grappling hook
                             } else {
                                 ammoDiv.textContent = `${this.state.weapons[weapon].ammo}/${this.config.weapons[weapon].maxAmmo}`;
                             }
@@ -6648,6 +7423,214 @@
                 }
             }
 
+            fireGrapplingHook() {
+                // Only allow one hook at a time
+                if (this.state.grappling.hook) return;
+
+                // Get exact direction where camera/crosshair is pointing
+                const direction = new THREE.Vector3(0, 0, -1);
+                direction.unproject(this.camera);
+                direction.sub(this.camera.position).normalize();
+
+                const hookGroup = new THREE.Group();
+
+                // Create hook head
+                const hookHead = new THREE.Mesh(
+                    new THREE.ConeGeometry(0.1, 0.2, 3),
+                    new THREE.MeshStandardMaterial({
+                        color: 0x888888,
+                        metalness: 0.8,
+                        roughness: 0.2
+                    })
+                );
+                hookHead.rotation.x = Math.PI / 2;
+                hookGroup.add(hookHead);
+
+                // Create trailing line
+                const lineGeometry = new THREE.BufferGeometry();
+                const lineMaterial = new THREE.LineBasicMaterial({
+                    color: 0x444444,
+                    linewidth: 2
+                });
+                
+                // Initialize with two points (will be updated)
+                const points = new Float32Array(6); // 2 points × 3 coordinates
+                lineGeometry.setAttribute('position', new THREE.BufferAttribute(points, 3));
+                const line = new THREE.Line(lineGeometry, lineMaterial);
+                this.scene.add(line);
+
+                hookGroup.position.copy(this.camera.position);
+                hookGroup.position.y -= 0.2;
+
+                const quaternion = new THREE.Quaternion();
+                quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), direction);
+                hookGroup.quaternion.copy(quaternion);
+
+                hookGroup.userData = {
+                    velocity: direction.clone().multiplyScalar(this.config.weapons.grapplingHook.speed),
+                    distance: 0,
+                    maxDistance: this.config.weapons.grapplingHook.hookRange,
+                    type: 'grapplingHook',
+                    prevPosition: hookGroup.position.clone(),
+                    startPoint: this.camera.position.clone(),
+                    line: line,
+                    isReturning: false,
+                    returnSpeed: this.config.weapons.grapplingHook.speed * 1.5
+                };
+
+                this.state.grappling.hook = hookGroup;
+                this.scene.add(hookGroup);
+
+                // Play grappling hook sound
+                this.playSound(440, 0.1, 'square', 0.2);
+            }
+
+            updateGrapplingHook() {
+                const hook = this.state.grappling.hook;
+                if (!hook) return;
+
+                // Update trailing line
+                const line = hook.userData.line;
+                const linePositions = line.geometry.attributes.position.array;
+                
+                // Update gun-end position
+                const gunPosition = this.camera.position.clone();
+                gunPosition.y -= 0.2;
+                linePositions[0] = gunPosition.x;
+                linePositions[1] = gunPosition.y;
+                linePositions[2] = gunPosition.z;
+                
+                // Update hook-end position
+                linePositions[3] = hook.position.x;
+                linePositions[4] = hook.position.y;
+                linePositions[5] = hook.position.z;
+                
+                line.geometry.attributes.position.needsUpdate = true;
+
+                if (hook.userData.isReturning) {
+                    // Return hook to player
+                    const returnDirection = new THREE.Vector3()
+                        .subVectors(gunPosition, hook.position)
+                        .normalize();
+                    
+                    hook.position.add(returnDirection.multiplyScalar(hook.userData.returnSpeed));
+                    
+                    // Remove hook when it gets close enough to player
+                    if (hook.position.distanceTo(gunPosition) < 0.5) {
+                        this.releaseGrapplingHook();
+                    }
+                    return;
+                }
+
+                if (!this.state.grappling.isHooked) {
+                    if (!this.state.isMouseDown) {
+                        // Start returning if mouse released during flight
+                        hook.userData.isReturning = true;
+                        return;
+                    }
+
+                    // Update hook position while flying
+                    hook.position.add(hook.userData.velocity);
+                    hook.userData.distance = hook.position.distanceTo(hook.userData.startPoint);
+
+                    // Check for collision with walls or max distance
+                    // Prevent hooking to ground by checking Y position
+                    if ((this.checkCollision(hook.position, false, true) && hook.position.y > 0.5) || 
+                        hook.userData.distance > hook.userData.maxDistance) {
+                        if (this.checkCollision(hook.position, false, true) && hook.position.y > 0.5) {
+                            // Hook hit something valid, start pulling
+                            this.state.grappling.isHooked = true;
+                            this.state.grappling.hookPoint = hook.position.clone();
+                            
+                            // Play hook hit sound
+                            this.playSound(880, 0.1, 'square', 0.3);
+                        } else {
+                            // Start returning if max distance reached or invalid hook point
+                            hook.userData.isReturning = true;
+                        }
+                    }
+                } else {
+                    if (!this.state.isMouseDown) {
+                        // Store current pull direction for momentum
+                        const pullDir = this.state.grappling.lastPullDirection;
+                        this.state.grappling.swingVelocity.set(
+                            pullDir.x * this.config.weapons.grapplingHook.pullSpeed,
+                            0,
+                            pullDir.z * this.config.weapons.grapplingHook.pullSpeed
+                        );
+                        
+                        // Start returning if mouse released while hooked
+                        hook.userData.isReturning = true;
+                        this.state.grappling.isHooked = false;
+                        return;
+                    }
+
+                    // Calculate distance to hook point
+                    const distanceToHook = this.camera.position.distanceTo(this.state.grappling.hookPoint);
+                    
+                    if (distanceToHook > 1) {  // Only pull if not already at hook point
+                        // Pull player towards hook point
+                        const pullDirection = new THREE.Vector3()
+                            .subVectors(this.state.grappling.hookPoint, this.camera.position)
+                            .normalize();
+                        
+                        // Store the pull direction for momentum
+                        this.state.grappling.lastPullDirection.copy(pullDirection);
+                        
+                        const newPosition = this.camera.position.clone()
+                            .add(pullDirection.multiplyScalar(this.config.weapons.grapplingHook.pullSpeed));
+
+                        // Check for collision before moving
+                        if (!this.checkCollision(newPosition)) {
+                            this.camera.position.copy(newPosition);
+                        } else {
+                            // Hit a wall while being pulled, release hook
+                            hook.userData.isReturning = true;
+                            this.state.grappling.isHooked = false;
+                        }
+                    } else {
+                        // At hook point - maintain position but store last direction for momentum
+                        const currentDir = new THREE.Vector3()
+                            .subVectors(this.state.grappling.hookPoint, this.camera.position)
+                            .normalize();
+                        this.state.grappling.lastPullDirection.copy(currentDir);
+                    }
+                }
+            }
+
+            releaseGrapplingHook() {
+                if (this.state.grappling.hook) {
+                    // Remove the trailing line
+                    if (this.state.grappling.hook.userData.line) {
+                        this.scene.remove(this.state.grappling.hook.userData.line);
+                    }
+                    this.scene.remove(this.state.grappling.hook);
+                    this.state.grappling.hook = null;
+                }
+                
+                // Store current pull direction for momentum before releasing
+                if (this.state.grappling.isHooked) {
+                    const pullDir = this.state.grappling.lastPullDirection;
+                    this.state.grappling.swingVelocity.set(
+                        pullDir.x * this.config.weapons.grapplingHook.pullSpeed * 2,  // Increased multiplier for more momentum
+                        0,
+                        pullDir.z * this.config.weapons.grapplingHook.pullSpeed * 2
+                    );
+                }
+                
+                this.state.grappling.isHooked = false;
+                this.state.grappling.hookPoint = null;
+                
+                // Start falling if we're above ground level
+                if (this.camera.position.y > this.config.playerHeight) {
+                    this.isJumping = true;
+                    this.jumpVelocity = 0;  // Start with zero upward velocity
+                }
+
+                // Play release sound
+                this.playSound(220, 0.1, 'square', 0.1);
+            }
+
         } // Close the Game class definition here
 
         let game = null;
@@ -6690,6 +7673,7 @@
                         <button onclick="game.spawnTestMonster('archer')" style="margin: 2px 0; padding: 5px; width: 100%; font-size: 12px;">Archer Monster</button>
                         <button onclick="game.spawnTestMonster('spider')" style="margin: 2px 0; padding: 5px; width: 100%; font-size: 12px;">Spider Monster</button>
                         <button onclick="game.spawnTestMonster('giant')" style="margin: 2px 0; padding: 5px; width: 100%; font-size: 12px;">Giant Monster</button>
+                        <button onclick="game.spawnTestMonster('charger')" style="margin: 2px 0; padding: 5px; width: 100%; font-size: 12px;">Charger Monster</button>
                     </div>
                     <div style="margin: 5px 0;">
                         <h4 style="font-size: 12px; margin: 5px 0;">Weapons</h4>
