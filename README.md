@@ -8,5 +8,5 @@ Visit: https://hsubrian2005.github.io/doom/
 - WASD: Move
 - Mouse: Aim/Shoot
 - Space: Jump
-- R: Reload
+- Q: Quick swap 
 - Esc: Pause
