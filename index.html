@@ -2900,7 +2900,9 @@ l<!DOCTYPE html>
                         Math.random() * 0.2 - 0.1,
                         Math.random() * 0.2 - 0.1
                     ),
-                    damage: this.clubThrowDamage
+                    damage: this.clubThrowDamage,
+                    hasHitPlayer: false, // Add this flag to track if club has already hit player
+                    stopped: false // Add this flag to track if club has stopped moving
                 };
                 
                 this.thrownClub = clubGroup;
@@ -2935,13 +2937,19 @@ l<!DOCTYPE html>
                     this.thrownClub.userData.velocity.set(0, 0, 0);
                     // Stop rotation when hitting wall
                     this.thrownClub.userData.rotationSpeed.set(0, 0, 0);
+                    // Mark as stopped so it won't damage player anymore
+                    this.thrownClub.userData.stopped = true;
                     return;
                 }
                 
                 // Check player collision
                 if (!this.game.state.powerups.invincibility.active) {
                     const distanceToPlayer = this.thrownClub.position.distanceTo(this.game.camera.position);
-                    if (distanceToPlayer < 1.0) {
+                    // Only damage player if club is still moving and hasn't hit player yet
+                    if (distanceToPlayer < 1.0 && !this.thrownClub.userData.hasHitPlayer && !this.thrownClub.userData.stopped) {
+                        // Mark that this club has already hit the player
+                        this.thrownClub.userData.hasHitPlayer = true;
+                        
                         // Apply damage
                         this.game.state.health -= this.thrownClub.userData.damage;
                         
@@ -2971,8 +2979,8 @@ l<!DOCTYPE html>
                             this.game.gameOver();
                         }
                         
-                        // Stop club movement
-                        this.thrownClub.userData.velocity.set(0, 0, 0);
+                        // Don't stop the club's motion when hitting the player
+                        // This allows it to continue moving if it was in motion
                     }
                 }
             }
@@ -3279,7 +3287,10 @@ l<!DOCTYPE html>
                         hookPoint: null,
                         hook: null,
                         swingVelocity: new THREE.Vector3(0, 0, 0),
-                        lastPullDirection: new THREE.Vector3(0, 0, 0)
+                        lastPullDirection: new THREE.Vector3(0, 0, 0),
+                        hookedEnemy: null,
+                        lastEnemyDamageTime: 0,
+                        initialRelativePos: null  // Add this new property
                     },
                     powerups: {
                         speed: { active: false, endTime: 0 },
@@ -4004,7 +4015,7 @@ l<!DOCTYPE html>
 
 
                 // Only allow normal movement when not hooked
-                if (!this.state.grappling.isHooked) {
+                //if (!this.state.grappling.isHooked) {
                     const moveSpeed = this.state.powerups.speed.active ? 
                         this.config.playerSpeed * 2 : 
                         this.config.playerSpeed;
@@ -4065,7 +4076,7 @@ l<!DOCTYPE html>
                             }
                         }
                     }
-                }
+                //}
             }
 
             createMonster(type = 'ground') {
@@ -7558,6 +7569,97 @@ l<!DOCTYPE html>
                 
                 line.geometry.attributes.position.needsUpdate = true;
 
+                // If we have a hooked enemy, update hook position to follow the enemy and deal damage
+                if (this.state.grappling.hookedEnemy) {
+                    const enemy = this.state.grappling.hookedEnemy;
+                    
+                    // Check if enemy is still alive
+                    if (!this.monsters.includes(enemy)) {
+                        // Enemy died, release the hook
+                        hook.userData.isReturning = true;
+                        this.state.grappling.isHooked = false;
+                        this.state.grappling.hookedEnemy = null;
+                        this.state.grappling.initialRelativePos = null;
+                        return;
+                    }
+                    
+                    // If this is the first time processing after hooking the enemy,
+                    // store the initial relative position between hook and enemy
+                    if (!this.state.grappling.initialRelativePos) {
+                        this.state.grappling.initialRelativePos = new THREE.Vector3().subVectors(
+                            hook.position,
+                            enemy.position
+                        );
+                    }
+                    
+                    // Update hook position to follow the enemy using the stored relative position
+                    hook.position.copy(enemy.position).add(this.state.grappling.initialRelativePos);
+                    
+                    // Deal damage to enemy every 0.1 seconds
+                    const now = Date.now();
+                    if (now - this.state.grappling.lastEnemyDamageTime > 100) { // 100ms = 0.1s
+                        this.damageMonster(enemy, 1, 0); // Deal 1 damage every 0.1 seconds
+                        this.state.grappling.lastEnemyDamageTime = now;
+                    }
+                    
+                    // Pull player towards hook point on the enemy
+                    const pullDirection = new THREE.Vector3()
+                        .subVectors(hook.position, this.camera.position)
+                        .normalize();
+                    
+                    // Store the pull direction for momentum
+                    this.state.grappling.lastPullDirection.copy(pullDirection);
+                    
+                    const newPosition = this.camera.position.clone()
+                        .add(pullDirection.multiplyScalar(this.config.weapons.grapplingHook.pullSpeed));
+                    
+                    // Ensure player never goes below ground level
+                    newPosition.y = Math.max(newPosition.y, this.config.playerHeight);
+                    
+                    // Check for collision before moving
+                    if (!this.checkCollision(newPosition)) {
+                        this.camera.position.copy(newPosition);
+                    }
+                    
+                    // Allow the player to rotate around the enemy when mouse is moved
+                    if (this.state.mouseMovement.x !== 0) {
+                        // Calculate player position relative to enemy
+                        const relativePos = new THREE.Vector3().subVectors(this.camera.position, enemy.position);
+                        
+                        // Calculate horizontal distance
+                        const distance = Math.sqrt(relativePos.x * relativePos.x + relativePos.z * relativePos.z);
+                        
+                        // Calculate current angle
+                        let angle = Math.atan2(relativePos.z, relativePos.x);
+                        
+                        // Adjust angle based on mouse movement (rotation speed)
+                        angle -= this.state.mouseMovement.x * 0.01;
+                        
+                        // Calculate new position
+                        const newPosition = new THREE.Vector3(
+                            enemy.position.x + Math.cos(angle) * distance,
+                            this.camera.position.y,
+                            enemy.position.z + Math.sin(angle) * distance
+                        );
+                        
+                        // Check for collision before moving
+                        if (!this.checkCollision(newPosition)) {
+                            this.camera.position.copy(newPosition);
+                        }
+                    }
+                    
+                    // If mouse button released, unhook
+                    if (!this.state.isMouseDown) {
+                        hook.userData.isReturning = true;
+                        this.state.grappling.isHooked = false;
+                        this.state.grappling.hookedEnemy = null;
+                        this.state.grappling.initialRelativePos = null;
+                        return;
+                    }
+                    
+                    return;
+                }
+
                 if (hook.userData.isReturning) {
                     // Return hook to player
                     const returnDirection = new THREE.Vector3()
@@ -7584,6 +7686,44 @@ l<!DOCTYPE html>
                     hook.position.add(hook.userData.velocity);
                     hook.userData.distance = hook.position.distanceTo(hook.userData.startPoint);
 
+                    // Check if hook hit an enemy using monster's checkHit method
+                    for (const monster of this.monsters) {
+                        // Use the monster's checkHit method for accurate hit detection
+                        const hitResult = monster.userData.instance.checkHit(hook.position);
+                        
+                        if (hitResult.hit) {
+                            // Hook hit an enemy, start grappling to it
+                            this.state.grappling.isHooked = true;
+                            this.state.grappling.hookedEnemy = monster;
+                            this.state.grappling.lastEnemyDamageTime = Date.now();
+                            
+                            // Store the exact hit position for pulling
+                            this.state.grappling.hookPoint = hook.position.clone();
+                            
+                            // Play hook hit sound - use a different sound pitch based on hit region
+                            const pitchMultiplier = hitResult.multiplier || 1;
+                            this.playSound(880 * pitchMultiplier, 0.1, 'square', 0.3);
+                            return;
+                        }
+                        
+                        // Fallback to simple distance check for compatibility with monsters
+                        // that might not have proper hit detection
+                        const distanceToMonster = hook.position.distanceTo(monster.position);
+                        if (distanceToMonster < 1.5) {
+                            // Hook hit an enemy, start grappling to it
+                            this.state.grappling.isHooked = true;
+                            this.state.grappling.hookedEnemy = monster;
+                            this.state.grappling.lastEnemyDamageTime = Date.now();
+                            
+                            // Store the hook position for pulling
+                            this.state.grappling.hookPoint = hook.position.clone();
+                            
+                            // Play hook hit sound
+                            this.playSound(880, 0.1, 'square', 0.3);
+                            return;
+                        }
+                    }
+
                     // Check for collision with walls or max distance
                     // Prevent hooking to ground by checking Y position
                     if ((this.checkCollision(hook.position, false, true) && hook.position.y > 0.5) || 
@@ -7601,50 +7741,49 @@ l<!DOCTYPE html>
                         }
                     }
                 } else {
-                    if (!this.state.isMouseDown) {
-                        // Store current pull direction for momentum
-                        const pullDir = this.state.grappling.lastPullDirection;
-                        this.state.grappling.swingVelocity.set(
-                            pullDir.x * this.config.weapons.grapplingHook.pullSpeed,
-                            0,
-                            pullDir.z * this.config.weapons.grapplingHook.pullSpeed
-                        );
-                        
-                        // Start returning if mouse released while hooked
-                        hook.userData.isReturning = true;
-                        this.state.grappling.isHooked = false;
-                        return;
-                    }
-
-                    // Calculate distance to hook point
-                    const distanceToHook = this.camera.position.distanceTo(this.state.grappling.hookPoint);
-                    
-                    if (distanceToHook > 1) {  // Only pull if not already at hook point
-                        // Pull player towards hook point
-                        const pullDirection = new THREE.Vector3()
-                            .subVectors(this.state.grappling.hookPoint, this.camera.position)
-                            .normalize();
-                        
-                        // Store the pull direction for momentum
-                        this.state.grappling.lastPullDirection.copy(pullDirection);
-                        
-                        const newPosition = this.camera.position.clone()
-                            .add(pullDirection.multiplyScalar(this.config.weapons.grapplingHook.pullSpeed));
-
-                        // Check for collision before moving
-                        if (!this.checkCollision(newPosition)) {
-                            this.camera.position.copy(newPosition);
-                        } else {
-                            // Hit a wall while being pulled, release hook
+                    // Only execute this block if we're hooked to a wall (not an enemy)
+                    if (!this.state.grappling.hookedEnemy) {
+                        if (!this.state.isMouseDown) {
+                            // Store current pull direction for momentum
+                            const pullDir = this.state.grappling.lastPullDirection;
+                            this.state.grappling.swingVelocity.set(
+                                pullDir.x * this.config.weapons.grapplingHook.pullSpeed,
+                                0,
+                                pullDir.z * this.config.weapons.grapplingHook.pullSpeed
+                            );
+                            
+                            // Start returning if mouse released while hooked
                             hook.userData.isReturning = true;
                             this.state.grappling.isHooked = false;
+                            return;
                         }
-                    } else {
-                        // At hook point - maintain position but store last direction for momentum
-                        const currentDir = new THREE.Vector3()
-                            .subVectors(this.state.grappling.hookPoint, this.camera.position)
-                            .normalize();
-                        this.state.grappling.lastPullDirection.copy(currentDir);
+
+                        // Calculate distance to hook point
+                        const distanceToHook = this.camera.position.distanceTo(this.state.grappling.hookPoint);
+                        
+                        if (distanceToHook > 1) {  // Only pull if not already at hook point
+                            // Pull player towards hook point
+                            const pullDirection = new THREE.Vector3()
+                                .subVectors(this.state.grappling.hookPoint, this.camera.position)
+                                .normalize();
+                            
+                            // Store the pull direction for momentum
+                            this.state.grappling.lastPullDirection.copy(pullDirection);
+                            
+                            const newPosition = this.camera.position.clone()
+                                .add(pullDirection.multiplyScalar(this.config.weapons.grapplingHook.pullSpeed));
+
+                            // Check for collision before moving
+                            if (!this.checkCollision(newPosition)) {
+                                this.camera.position.copy(newPosition);
+                            }
+                        } else {
+                            // At hook point - maintain position but store last direction for momentum
+                            const currentDir = new THREE.Vector3()
+                                .subVectors(this.state.grappling.hookPoint, this.camera.position)
+                                .normalize();
+                            this.state.grappling.lastPullDirection.copy(currentDir);
+                        }
                     }
                 }
             }
@@ -7671,6 +7810,8 @@ l<!DOCTYPE html>
                 
                 this.state.grappling.isHooked = false;
                 this.state.grappling.hookPoint = null;
+                this.state.grappling.hookedEnemy = null;
+                this.state.grappling.initialRelativePos = null;  // Clear this property
                 
                 // Start falling if we're above ground level
                 if (this.camera.position.y > this.config.playerHeight) {
