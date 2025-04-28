@@ -2,7 +2,7 @@
 A simple 3D shooter game built with Three.js.
 
 ## Play
-Visit: [https://your-username.github.io/doom-shooter/](https://hsubrian2005.github.io/doom/)
+Visit: https://hsubrian2005.github.io/doom/
 
 ## Controls
 - WASD: Move
