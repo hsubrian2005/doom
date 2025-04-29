@@ -3021,6 +3021,115 @@ l<!DOCTYPE html>
                 this.game.playSound(440, 0.1, 'sine', 0.2);
             }
 
+            checkCollision(position, isMonster = false, isProjectile = false, customRadius = null) {
+                // For monsters, use their specific collision radius
+                const radius = customRadius ?? 
+                    (isProjectile ? 0.1 : 0.3);
+                
+                // Spatial optimization: Only check walls near the position
+                // Calculate which grid cell the position is in
+                const cellSize = this.config.cellSize;
+                const gridX = Math.floor((position.x + (this.config.mazeSize * cellSize / 2)) / cellSize);
+                const gridZ = Math.floor((position.z + (this.config.mazeSize * cellSize / 2)) / cellSize);
+                
+                // Check only nearby walls (current cell and adjacent cells)
+                const wallsToCheck = [];
+                
+                // Only check walls in a 3x3 grid around the current position
+                for (let dx = -1; dx <= 1; dx++) {
+                    for (let dz = -1; dz <= 1; dz++) {
+                        const checkX = gridX + dx;
+                        const checkZ = gridZ + dz;
+                        
+                        // Skip out of bounds cells
+                        if (checkX < 0 || checkX >= this.config.mazeSize || 
+                            checkZ < 0 || checkZ >= this.config.mazeSize) {
+                            continue;
+                        }
+                        
+                        // If this cell has a wall, find it in the walls array
+                        if (this.maze[checkX][checkZ] === 1) {
+                            const wallX = (checkX - this.config.mazeSize/2) * cellSize;
+                            const wallZ = (checkZ - this.config.mazeSize/2) * cellSize;
+                            
+                            // Find wall with this position
+                            for (const wall of this.walls) {
+                                if (Math.abs(wall.position.x - wallX) < 0.1 && 
+                                    Math.abs(wall.position.z - wallZ) < 0.1) {
+                                    wallsToCheck.push(wall);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Check collision with nearby walls only
+                for (const wall of wallsToCheck) {
+                    // Get wall boundaries
+                    const wallHalfSize = this.config.cellSize / 2;
+                    const wallMinX = wall.position.x - wallHalfSize;
+                    const wallMaxX = wall.position.x + wallHalfSize;
+                    const wallMinZ = wall.position.z - wallHalfSize;
+                    const wallMaxZ = wall.position.z + wallHalfSize;
+                    
+                    // Find closest point on wall to position
+                    const closestX = Math.max(wallMinX, Math.min(position.x, wallMaxX));
+                    const closestZ = Math.max(wallMinZ, Math.min(position.z, wallMaxZ));
+                    
+                    // Calculate distance from closest point
+                    const dx = position.x - closestX;
+                    const dz = position.z - closestZ;
+                    const distance = Math.sqrt(dx * dx + dz * dz);
+                    
+                    // Check if distance is less than collision radius
+                    if (distance < radius) {
+                        return true;
+                    }
+                }
+
+                // Monster-player collision check - Spatial optimization
+                if (isMonster) {
+                    // Only check player collision if player is close
+                    const dx = position.x - this.camera.position.x;
+                    const dz = position.z - this.camera.position.z;
+                    const distanceSquared = dx * dx + dz * dz;
+                    
+                    // Quick early exit check using squared distance
+                    if (distanceSquared < 4) { // 2 unit radius check
+                        const distance = Math.sqrt(distanceSquared);
+                        const monsterRadius = position.userData && position.userData.instance ? 
+                            position.userData.instance.collisionRadius : 0.2;
+                        if (distance < monsterRadius + 0.3) return true;
+                    }
+                } else {
+                    // Check monster collisions for player - with spatial optimization
+                    const nearbyMonsters = [];
+                    
+                    // Only check monsters within a certain distance
+                    for (const monster of this.monsters) {
+                        const dx = position.x - monster.position.x;
+                        const dz = position.z - monster.position.z;
+                        const distanceSquared = dx * dx + dz * dz;
+                        
+                        // If monster is nearby, add to check list
+                        if (distanceSquared < 4) { // 2 unit radius check
+                            nearbyMonsters.push(monster);
+                        }
+                    }
+                    
+                    // Only check collision with nearby monsters
+                    for (const monster of nearbyMonsters) {
+                        const dx = position.x - monster.position.x;
+                        const dz = position.z - monster.position.z;
+                        const distance = Math.sqrt(dx * dx + dz * dz);
+                        if (distance < radius + 0.2) return true;
+                    }
+                }
+                
+                return false;
+            }
+
             checkHit(projectilePosition) {
                 // Get relative position from monster to projectile
                 const relativePos = new THREE.Vector3().subVectors(projectilePosition, this.mesh.position);
@@ -3897,8 +4006,46 @@ l<!DOCTYPE html>
                 const radius = customRadius ?? 
                     (isProjectile ? 0.1 : 0.3);
                 
-                // Check collision with each wall
-                for (const wall of this.walls) {
+                // Spatial optimization: Only check walls near the position
+                // Calculate which grid cell the position is in
+                const cellSize = this.config.cellSize;
+                const gridX = Math.floor((position.x + (this.config.mazeSize * cellSize / 2)) / cellSize);
+                const gridZ = Math.floor((position.z + (this.config.mazeSize * cellSize / 2)) / cellSize);
+                
+                // Check only nearby walls (current cell and adjacent cells)
+                const wallsToCheck = [];
+                
+                // Only check walls in a 3x3 grid around the current position
+                for (let dx = -1; dx <= 1; dx++) {
+                    for (let dz = -1; dz <= 1; dz++) {
+                        const checkX = gridX + dx;
+                        const checkZ = gridZ + dz;
+                        
+                        // Skip out of bounds cells
+                        if (checkX < 0 || checkX >= this.config.mazeSize || 
+                            checkZ < 0 || checkZ >= this.config.mazeSize) {
+                            continue;
+                        }
+                        
+                        // If this cell has a wall, find it in the walls array
+                        if (this.maze[checkX][checkZ] === 1) {
+                            const wallX = (checkX - this.config.mazeSize/2) * cellSize;
+                            const wallZ = (checkZ - this.config.mazeSize/2) * cellSize;
+                            
+                            // Find wall with this position
+                            for (const wall of this.walls) {
+                                if (Math.abs(wall.position.x - wallX) < 0.1 && 
+                                    Math.abs(wall.position.z - wallZ) < 0.1) {
+                                    wallsToCheck.push(wall);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Check collision with nearby walls only
+                for (const wall of wallsToCheck) {
                     // Get wall boundaries
                     const wallHalfSize = this.config.cellSize / 2;
                     const wallMinX = wall.position.x - wallHalfSize;
@@ -3921,17 +4068,38 @@ l<!DOCTYPE html>
                     }
                 }
 
-                // Monster-player collision check
+                // Monster-player collision check - Spatial optimization
                 if (isMonster) {
+                    // Only check player collision if player is close
                     const dx = position.x - this.camera.position.x;
                     const dz = position.z - this.camera.position.z;
-                    const distance = Math.sqrt(dx * dx + dz * dz);
-                    const monsterRadius = position.userData && position.userData.instance ? 
-                        position.userData.instance.collisionRadius : 0.2;
-                    if (distance < monsterRadius + 0.3) return true;
+                    const distanceSquared = dx * dx + dz * dz;
+                    
+                    // Quick early exit check using squared distance
+                    if (distanceSquared < 4) { // 2 unit radius check
+                        const distance = Math.sqrt(distanceSquared);
+                        const monsterRadius = position.userData && position.userData.instance ? 
+                            position.userData.instance.collisionRadius : 0.2;
+                        if (distance < monsterRadius + 0.3) return true;
+                    }
                 } else {
-                    // Check monster collisions for player
+                    // Check monster collisions for player - with spatial optimization
+                    const nearbyMonsters = [];
+                    
+                    // Only check monsters within a certain distance
                     for (const monster of this.monsters) {
+                        const dx = position.x - monster.position.x;
+                        const dz = position.z - monster.position.z;
+                        const distanceSquared = dx * dx + dz * dz;
+                        
+                        // If monster is nearby, add to check list
+                        if (distanceSquared < 4) { // 2 unit radius check
+                            nearbyMonsters.push(monster);
+                        }
+                    }
+                    
+                    // Only check collision with nearby monsters
+                    for (const monster of nearbyMonsters) {
                         const dx = position.x - monster.position.x;
                         const dz = position.z - monster.position.z;
                         const distance = Math.sqrt(dx * dx + dz * dz);
